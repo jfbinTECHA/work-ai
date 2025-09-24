@@ -1,138 +1,136 @@
-# Code Pretraining Models
+# AI Work Toolkit
 
-This repo contains code pretraining models in the CodeBERT series from Microsoft, including six models as of June 2023.
-- CodeBERT (EMNLP 2020)
-- GraphCodeBERT (ICLR 2021)
-- UniXcoder (ACL 2022)
-- CodeReviewer (ESEC/FSE 2022)
-- CodeExecutor (ACL 2023)
-- LongCoder (ICML 2023)
+A comprehensive collection of AI tools, models, and automation systems for code intelligence, data collection, and autonomous AI interactions.
 
-# CodeBERT
+## Components
 
-This repo provides the code for reproducing the experiments in [CodeBERT: A Pre-Trained Model for Programming and Natural Languages](https://arxiv.org/pdf/2002.08155.pdf). CodeBERT is a pre-trained model for programming language, which is a multi-programming-lingual model pre-trained on NL-PL pairs in 6 programming languages (Python, Java, JavaScript, PHP, Ruby, Go). 
+### 🤖 CodeBERT Series Models
+Pre-trained models for programming language understanding from Microsoft Research:
+- **CodeBERT** (EMNLP 2020) - Multi-lingual code representation learning
+- **GraphCodeBERT** (ICLR 2021) - Code representations with data flow
+- **UniXcoder** (ACL 2022) - Unified cross-modal pre-training for code
+- **CodeReviewer** (ESEC/FSE 2022) - Pre-training for code review activities
+- **CodeExecutor** (ACL 2023) - Code execution with pre-trained language models
+- **LongCoder** (ICML 2023) - Long-range pre-trained language model for code
 
-### Dependency
+### 🔍 AI-Zetta GitHub Scraper
+Automated system for collecting Python code snippets from GitHub repositories:
+- Searches repositories by popularity and language
+- Extracts function-level code segments
+- Filters duplicates and generates structured datasets
+- Perfect for building machine learning datasets for code intelligence
 
-- pip install torch
-- pip install transformers
+### 🤖 Nomi Automator
+Autonomous AI chat system with extensive integrations:
+- Automated interactions with Nomi.ai chat interface
+- Multi-AI conversation management
+- Voice synthesis with ElevenLabs
+- Image generation with DALL-E
+- Virtual world integration (Mozilla Hubs, Spatial.io)
+- Google services (Gmail, YouTube, Drive)
+- VoIP calling with TextNow
+- Dynamic ML model loading from Hugging Face
+- Self-modification and API creation capabilities
 
-### Quick Tour
-We use huggingface/transformers framework to train the model. You can use our model like the pre-trained Roberta base. Now, We give an example on how to load the model.
+## Quick Start
+
+### CodeBERT Models
+
+**Installation:**
+```bash
+pip install torch transformers
+```
+
+**Basic Usage:**
 ```python
+from transformers import AutoTokenizer, AutoModel
 import torch
-from transformers import RobertaTokenizer, RobertaConfig, RobertaModel
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = RobertaTokenizer.from_pretrained("microsoft/codebert-base")
-model = RobertaModel.from_pretrained("microsoft/codebert-base")
-model.to(device)
+# Load CodeBERT
+tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
+model = AutoModel.from_pretrained("microsoft/codebert-base")
+
+# Example: Get embeddings for code
+code = "def hello_world(): print('Hello, World!')"
+tokens = tokenizer.tokenize(code)
+print(tokens)
 ```
 
-### NL-PL Embeddings
+For detailed usage of each CodeBERT model, see their respective folders:
+- [CodeBERT](CodeBERT/) - Base model for code understanding
+- [GraphCodeBERT](GraphCodeBERT/) - Code with data flow
+- [UniXcoder](UniXcoder/) - Cross-modal code representation
+- [CodeReviewer](CodeReviewer/) - Code review automation
+- [CodeExecutor](CodeExecutor/) - Code execution prediction
+- [LongCoder](LongCoder/) - Long code modeling
 
-Here, we give an example to obtain embedding from CodeBERT.
+### AI-Zetta GitHub Scraper
 
-```python
->>> from transformers import AutoTokenizer, AutoModel
->>> import torch
->>> tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
->>> model = AutoModel.from_pretrained("microsoft/codebert-base")
->>> nl_tokens=tokenizer.tokenize("return maximum value")
-['return', 'Ġmaximum', 'Ġvalue']
->>> code_tokens=tokenizer.tokenize("def max(a,b): if a>b: return a else return b")
-['def', 'Ġmax', '(', 'a', ',', 'b', '):', 'Ġif', 'Ġa', '>', 'b', ':', 'Ġreturn', 'Ġa', 'Ġelse', 'Ġreturn', 'Ġb']
->>> tokens=[tokenizer.cls_token]+nl_tokens+[tokenizer.sep_token]+code_tokens+[tokenizer.eos_token]
-['<s>', 'return', 'Ġmaximum', 'Ġvalue', '</s>', 'def', 'Ġmax', '(', 'a', ',', 'b', '):', 'Ġif', 'Ġa', '>', 'b', ':', 'Ġreturn', 'Ġa', 'Ġelse', 'Ġreturn', 'Ġb', '</s>']
->>> tokens_ids=tokenizer.convert_tokens_to_ids(tokens)
-[0, 30921, 4532, 923, 2, 9232, 19220, 1640, 102, 6, 428, 3256, 114, 10, 15698, 428, 35, 671, 10, 1493, 671, 741, 2]
->>> context_embeddings=model(torch.tensor(tokens_ids)[None,:])[0]
-torch.Size([1, 23, 768])
-tensor([[-0.1423,  0.3766,  0.0443,  ..., -0.2513, -0.3099,  0.3183],
-        [-0.5739,  0.1333,  0.2314,  ..., -0.1240, -0.1219,  0.2033],
-        [-0.1579,  0.1335,  0.0291,  ...,  0.2340, -0.8801,  0.6216],
-        ...,
-        [-0.4042,  0.2284,  0.5241,  ..., -0.2046, -0.2419,  0.7031],
-        [-0.3894,  0.4603,  0.4797,  ..., -0.3335, -0.6049,  0.4730],
-        [-0.1433,  0.3785,  0.0450,  ..., -0.2527, -0.3121,  0.3207]],
-       grad_fn=<SelectBackward>)
+**Setup:**
+```bash
+cd CodeBERT/ai_zetta
+python3 -m venv venv
+source venv/bin/activate
+pip install PyGithub
+export GITHUB_TOKEN="your_github_token"
 ```
 
-
-### Probing
-
-As stated in the paper, CodeBERT is not suitable for mask prediction task, while CodeBERT (MLM) is suitable for mask prediction task.
-
-
-We give an example on how to use CodeBERT(MLM) for mask prediction task.
-```python
-from transformers import RobertaConfig, RobertaTokenizer, RobertaForMaskedLM, pipeline
-
-model = RobertaForMaskedLM.from_pretrained("microsoft/codebert-base-mlm")
-tokenizer = RobertaTokenizer.from_pretrained("microsoft/codebert-base-mlm")
-
-CODE = "if (x is not None) <mask> (x>1)"
-fill_mask = pipeline('fill-mask', model=model, tokenizer=tokenizer)
-
-outputs = fill_mask(CODE)
-print(outputs)
-
-```
-Results
-```python
-'and', 'or', 'if', 'then', 'AND'
-```
-The detailed outputs are as follows:
-```python
-{'sequence': '<s> if (x is not None) and (x>1)</s>', 'score': 0.6049249172210693, 'token': 8}
-{'sequence': '<s> if (x is not None) or (x>1)</s>', 'score': 0.30680200457572937, 'token': 50}
-{'sequence': '<s> if (x is not None) if (x>1)</s>', 'score': 0.02133703976869583, 'token': 114}
-{'sequence': '<s> if (x is not None) then (x>1)</s>', 'score': 0.018607674166560173, 'token': 172}
-{'sequence': '<s> if (x is not None) AND (x>1)</s>', 'score': 0.007619690150022507, 'token': 4248}
+**Usage:**
+```bash
+python github_scraper.py
 ```
 
-### Downstream Tasks
+This will scrape Python repositories and extract function-level code snippets for ML training datasets.
 
-For Code Search and Code Documentation Generation tasks, please refer to the [CodeBERT](https://github.com/microsoft/CodeBERT/tree/master/CodeBERT) folder.
+### Nomi Automator
 
+**Setup:**
+```bash
+cd nomi_automator
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+playwright install
+```
 
+**Basic Usage:**
+```bash
+python main.py
+```
 
-# GraphCodeBERT
+For advanced features like voice synthesis, API integrations, and autonomous operation, see the [nomi_automator README](nomi_automator/README.md).
+## Project Structure
 
-This repo also provides the code for reproducing the experiments in [GraphCodeBERT: Pre-training Code Representations with Data Flow](https://openreview.net/pdf?id=jLoC4ez43PZ). GraphCodeBERT is a pre-trained model for programming language that considers the inherent structure of code i.e. data flow, which is a multi-programming-lingual model pre-trained on NL-PL pairs in 6 programming languages (Python, Java, JavaScript, PHP, Ruby, Go). 
-
-For downstream tasks like code search, clone detection, code refinement and code translation, please refer to the [GraphCodeBERT](https://github.com/microsoft/CodeBERT/tree/master/GraphCodeBERT) folder.
-
-# UniXcoder
-
-This repo will provide the code for reproducing the experiments in [UniXcoder: Unified Cross-Modal Pre-training for Code Representation](https://arxiv.org/pdf/2203.03850.pdf). UniXcoder is a unified cross-modal pre-trained model for programming languages to support both code-related understanding and generation tasks. 
-
-Please refer to the [UniXcoder](https://github.com/microsoft/CodeBERT/tree/master/UniXcoder) folder for tutorials and downstream tasks.
-
-# CodeReviewer
-
-This repo also provides the code for reproducing the experiments in [CodeReviewer: Pre-Training for Automating Code Review Activities](https://arxiv.org/abs/2203.09095). CodeReviewer is a model pre-trained with code change and code review data to support code review tasks.
-
-Please refer to the [CodeReviewer](https://github.com/microsoft/CodeBERT/tree/master/CodeReviewer) folder for tutorials and downstream tasks.
-
-# CodeExecutor
-
-This repo provides the code for reproducing the experiments in [Code Execution with Pre-trained Language Models](https://arxiv.org/pdf/2305.05383.pdf). CodeExecutor is a pre-trained model that learns to predict the execution traces using a code execution pre-training task and curriculum learning.
-
-Please refer to the [CodeExecutor](https://github.com/microsoft/CodeBERT/tree/master/CodeExecutor) folder for details.
-
-# LongCoder
-
-This repo will provide the code for reproducing the experiments on LCC datasets in [LongCoder: A Long-Range Pre-trained Language Model for Code Completion](https://arxiv.org/abs/2306.14893). LongCoder is a sparse and efficient pre-trained Transformer model for long code modeling.
-
-Please refer to the [LongCoder](https://github.com/microsoft/CodeBERT/tree/master/LongCoder) folder for details.
-## Contact
-
-Feel free to contact Daya Guo (guody5@mail2.sysu.edu.cn), Shuai Lu (shuailu@microsoft.com) and Nan Duan (nanduan@microsoft.com) if you have any further questions.
+```
+├── CodeBERT/           # Original Microsoft CodeBERT models
+│   ├── ai_zetta/       # GitHub code scraper for ML datasets
+│   ├── code2nl/        # Code to natural language
+│   ├── codesearch/     # Code search functionality
+│   └── ...
+├── CodeExecutor/       # Code execution prediction
+├── CodeReviewer/       # Code review automation
+├── GraphCodeBERT/      # Graph-based code representations
+├── LongCoder/          # Long code modeling
+├── UniXcoder/          # Cross-modal code models
+└── nomi_automator/     # Autonomous AI chat system
+```
 
 ## Contributing
 
-We appreciate all contributions and thank all the contributors!
-<p align="center">
-  <img src="https://contributors-img.web.app/image?repo=microsoft/CodeBERT" />
-</p>
+This repository is a fork of [Microsoft CodeBERT](https://github.com/microsoft/CodeBERT) with additional AI tools and automation systems.
+
+- **CodeBERT Models**: Follow the original Microsoft contribution guidelines
+- **AI-Zetta & Nomi Automator**: Open to contributions, improvements, and new features
+- **Bug Reports**: Please file issues with detailed reproduction steps
+- **Feature Requests**: Open issues describing the desired functionality
+
+## License
+
+This project maintains the same license as the original Microsoft CodeBERT repository. See [LICENSE](LICENSE) for details.
+
+## Acknowledgments
+
+- **Microsoft Research** for the original CodeBERT series models
+- **Hugging Face** for the transformers library
+- **GitHub** for the API and platform
+- All contributors to the open-source AI community
