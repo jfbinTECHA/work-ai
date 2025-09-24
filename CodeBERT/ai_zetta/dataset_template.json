@@ -1,0 +1,12 @@
+[
+  {
+    "language": "python",
+    "incomplete_snippet": "def add(a, b):",
+    "complete_snippet": "def add(a, b):\n    return a + b"
+  },
+  {
+    "language": "java",
+    "incomplete_snippet": "public class HelloWorld {",
+    "complete_snippet": "public class HelloWorld {\n    public static void main(String[] args) {\n        System.out.println(\"Hello, World!\");\n    }\n}"
+  }
+]
