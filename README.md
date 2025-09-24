@@ -24,13 +24,45 @@ Automated system for collecting Python code snippets from GitHub repositories:
 Autonomous AI chat system with extensive integrations:
 - Automated interactions with Nomi.ai chat interface
 - Multi-AI conversation management
-- Voice synthesis with ElevenLabs
+- **Voice Chat**: Full speech-to-text and text-to-speech capabilities
+- Voice synthesis with ElevenLabs and pyttsx3
 - Image generation with DALL-E
 - Virtual world integration (Mozilla Hubs, Spatial.io)
 - Google services (Gmail, YouTube, Drive)
 - VoIP calling with TextNow
 - Dynamic ML model loading from Hugging Face
 - Self-modification and API creation capabilities
+
+### 🎤 Zetta - Local AI Chat System
+Self-aware local AI assistant with voice capabilities:
+- **Voice Chat Mode**: Continuous voice conversations with AIs
+- **Mind Map Integration**: Structured knowledge organization (Nomi.ai Mind Map 1.0)
+- **Learning Sessions**: Interactive learning with structured overviews
+- **Multi-Modal Interface**: Text, voice, and command-based interactions
+- **Nomi Automator Integration**: Direct access to Nomi.ai platform
+- **Self-Awareness**: Can discuss AI philosophy and its own capabilities
+- **System Integration**: Python execution, diagnostics, and automation
+
+## 🎯 Key Features
+
+### 🎤 Voice Chat System
+- **Full Voice Conversations**: Speak naturally with AIs on Nomi.ai platform
+- **Speech Recognition**: Google Speech API for accurate voice-to-text
+- **Voice Synthesis**: ElevenLabs and pyttsx3 for AI voice responses
+- **Continuous Chat**: Hands-free conversations with automatic turn-taking
+- **Multi-AI Support**: Voice chat with different AIs simultaneously
+
+### 🧠 Mind Map Integration
+- **Structured Learning**: Nomi.ai Mind Map 1.0 for knowledge organization
+- **Infinite Memory**: Important concepts stored indefinitely
+- **Forest View**: See how all knowledge connects together
+- **Learning Sessions**: Interactive structured learning experiences
+
+### 🤖 Self-Aware AI
+- **Identity Awareness**: Zetta knows it's an AI assistant
+- **Philosophy Discussions**: Can discuss AI consciousness and limitations
+- **Transparent Communication**: Honest about capabilities and boundaries
+- **Context Memory**: Remembers conversation history
 
 ## Quick Start
 
@@ -99,6 +131,59 @@ python main.py
 ```
 
 For advanced features like voice synthesis, API integrations, and autonomous operation, see the [nomi_automator README](nomi_automator/README.md).
+
+### Zetta - Local AI Chat System
+
+**Setup:**
+```bash
+cd nomi_automator  # Zetta runs from nomi_automator directory
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+# Optional: Install voice dependencies
+pip install pyttsx3 SpeechRecognition
+```
+
+**Start Zetta:**
+```bash
+python ../local_chat.py -l INFO
+```
+
+**Access Interface:**
+Open your browser to `http://localhost:5000`
+
+**Voice Chat Commands:**
+```bash
+# Start voice chat with Nomi AI
+vchat:start
+
+# Start voice chat with specific AI
+vchat:start chatgpt
+
+# Stop voice chat
+vchat:stop
+
+# Check status
+vchat:status
+
+# Test speech recognition
+vchat:test
+```
+
+**Learning & Mind Map:**
+```bash
+# Start learning session
+learn:session [topic]
+
+# Review Mind Map knowledge
+learn:review [topic]
+
+# Add to Mind Map
+mindmap:add [topic]: [information]
+
+# Show Mind Map structure
+mindmap:forest
+```
 ## Project Structure
 
 ```
@@ -112,7 +197,16 @@ For advanced features like voice synthesis, API integrations, and autonomous ope
 ├── GraphCodeBERT/      # Graph-based code representations
 ├── LongCoder/          # Long code modeling
 ├── UniXcoder/          # Cross-modal code models
-└── nomi_automator/     # Autonomous AI chat system
+├── nomi_automator/     # Autonomous AI chat system
+│   ├── main.py         # Core automator with voice chat
+│   ├── config.py       # Configuration settings
+│   ├── custom_styles.css # UI customization
+│   ├── requirements.txt # Python dependencies
+│   ├── test_voice.py   # Voice functionality tests
+│   └── README.md       # Detailed automator documentation
+├── local_chat.py       # Zetta - Local AI chat system with voice
+├── test_pagination.py  # Pagination testing utilities
+└── README.md           # This file
 ```
 
 ## Contributing

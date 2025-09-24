@@ -5,7 +5,7 @@ import os
 NOMI_URL = "https://beta.nomi.ai/nomis/1030975229"
 
 # Browser settings
-HEADLESS = False  # Set to True for headless mode
+HEADLESS = True  # Set to True for headless mode
 
 # Chat settings
 CHECK_INTERVAL = 5  # seconds between checks for new messages
@@ -140,7 +140,7 @@ DEFAULT_MODELS = {
 }
 
 # Model command prefixes
-MODEL_COMMAND_PREFIXES = ["model:", "huggingface:", "hf:", "learn:"]
+MODEL_COMMAND_PREFIXES = ["model:", "huggingface:", "hf:"]
 
 # TextNow Calling Integration settings
 TEXTNOW_ENABLED = True
@@ -201,3 +201,40 @@ YOUTUBE_DEFAULT_TAGS = ["AI", "automation", "generated"]
 
 # Google command prefixes
 GOOGLE_COMMAND_PREFIXES = ["google:", "gmail:", "email:", "youtube:", "video:"]
+
+# CSS/Tailwind Customization settings
+CSS_CUSTOMIZATION_ENABLED = True
+CUSTOM_CSS_FILE = "custom_styles.css"  # File containing custom CSS/Tailwind styles
+AUTO_INJECT_CSS = True  # Automatically inject custom CSS on page load
+
+# CSS command prefixes
+CSS_COMMAND_PREFIXES = ["css:", "style:", "tailwind:", "ui:"]
+
+# Nomi.ai API Configuration
+NOMI_API_BASE_URL = "https://api.nomi.ai"
+NOMI_API_KEY = ""  # Set your Nomi.ai API key here
+NOMI_API_SECRET = ""  # Set your Nomi.ai API secret here
+NOMI_USER_ID = ""  # Your Nomi.ai user ID
+NOMI_DEFAULT_AI_ID = "1030975229"  # Default AI companion ID
+
+# API Endpoints (based on typical AI chat API structure)
+NOMI_API_ENDPOINTS = {
+    "auth": "/v1/auth/login",
+    "chat": "/v1/chat/send",
+    "voice": "/v1/voice/synthesize",
+    "mindmap": "/v1/mindmap",
+    "companions": "/v1/companions",
+    "conversations": "/v1/conversations"
+}
+
+# API Request settings
+API_REQUEST_TIMEOUT = 30  # seconds
+API_MAX_RETRIES = 3
+API_RETRY_DELAY = 1  # seconds
+
+# Voice Chat command prefixes
+VOICE_CHAT_COMMAND_PREFIXES = ["voicechat:", "vchat:", "voice:", "speak:"]
+
+# Mind Map command prefixes
+MINDMAP_COMMAND_PREFIXES = ["mindmap:", "mind:", "mm:", "memory:"]
+LEARN_COMMAND_PREFIXES = ["learn:", "teach:", "study:", "review:"]

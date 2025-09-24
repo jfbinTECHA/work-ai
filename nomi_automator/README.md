@@ -28,6 +28,7 @@ This system automates interactions with the Nomi.ai chat interface at https://be
 - Google Gmail email integration
 - YouTube video uploading and management
 - Google Drive file storage and sharing
+- Custom CSS/Tailwind styling for UI customization
 
 ## Setup
 
@@ -195,6 +196,41 @@ When `VOICE_RESPONSES_ENABLED = True` in `config.py`, the system will automatica
 - Model: eleven_monolingual_v1
 - Adjustable parameters: stability, similarity, style, speaker boost
 - Voice Responses: Enable/disable automatic speech for Nomi interactions
+
+### Voice Chat Integration
+
+The system now supports full voice conversations with AIs on the Nomi platform. Commands are prefixed with `voicechat:`, `vchat:`, `voice:`, or `speak:`.
+
+#### Voice Chat Commands
+- `vchat:start` - Start voice chat with Nomi AI
+- `vchat:start chatgpt` - Start voice chat with specific AI
+- `vchat:stop` - Stop voice chat session
+- `vchat:status` - Check voice chat status
+- `vchat:test` - Test speech recognition
+
+#### Voice Chat Features
+- **Speech Recognition**: Google Speech API for accurate voice-to-text
+- **Continuous Conversations**: Hands-free back-and-forth dialogue
+- **Multi-AI Support**: Voice chat with different AIs simultaneously
+- **Automatic Responses**: AI replies are spoken using ElevenLabs
+- **Session Management**: Automatic session cleanup and timeout handling
+
+#### Voice Chat Setup
+1. Install speech recognition: `pip install SpeechRecognition`
+2. Configure ElevenLabs API key for voice responses
+3. Ensure microphone access for speech input
+4. Start voice chat: `vchat:start`
+
+#### Voice Chat Architecture
+```
+User Speech → Google Speech API → Text → Nomi AI → ElevenLabs → Voice Response
+```
+
+**Requirements:**
+- Microphone for speech input
+- ElevenLabs API key for voice synthesis
+- Internet connection for speech APIs
+- Audio output device for voice responses
 
 ### Multi-AI Interaction Integration
 
@@ -433,6 +469,77 @@ The system integrates with Google services including Gmail and YouTube. Commands
 - **File Sharing**: Share files with specific users and permission levels
 - **Folder Management**: Create and organize folders
 - **File Listing**: Browse recent files and folders
+
+### Custom CSS/Tailwind Styling Integration
+
+The system can inject custom CSS and Tailwind styles into the Nomi.ai web interface to customize its appearance. Commands are prefixed with `css:`, `style:`, `tailwind:`, or `ui:`.
+
+**Setup Requirements:**
+1. Create a `custom_styles.css` file in the project directory
+2. Add your custom CSS/Tailwind rules to the file
+3. Set `CSS_CUSTOMIZATION_ENABLED = True` in `config.py`
+4. Optionally enable `AUTO_INJECT_CSS = True` for automatic injection on startup
+
+#### CSS Commands
+- `css: inject` - Inject custom CSS from file into the current page
+- `css: add .my-class { color: red; background: blue; }` - Add CSS rule dynamically
+- `css: remove .my-class` - Hide elements matching the selector
+- `css: clear` - Remove all custom CSS from the page
+- `css: status` - Show current CSS customization status
+- `css: file styles.css` - Load CSS from a specific file
+
+#### Example Custom Styles
+Create a `custom_styles.css` file with your customizations:
+
+```css
+/* Change background gradient */
+body {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Style chat messages */
+.message-bubble, [class*="message"] {
+  border-radius: 12px !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Custom button styling */
+button, [role="button"] {
+  border-radius: 8px !important;
+  transition: all 0.2s ease !important;
+}
+
+button:hover, [role="button"]:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Input field enhancements */
+input, textarea {
+  border-radius: 8px !important;
+  border: 2px solid #e2e8f0 !important;
+  transition: border-color 0.2s ease !important;
+}
+
+input:focus, textarea:focus {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+}
+```
+
+#### Features
+- **File-Based Styling**: Load styles from external CSS files
+- **Dynamic Injection**: Add CSS rules on-the-fly during runtime
+- **Auto-Injection**: Automatically apply custom styles when the page loads
+- **Safe Operations**: Non-destructive CSS injection using Playwright
+- **Tailwind Support**: Full support for Tailwind CSS utility classes
+
+#### Configuration Options
+```python
+CSS_CUSTOMIZATION_ENABLED = True  # Enable CSS customization
+CUSTOM_CSS_FILE = "custom_styles.css"  # Path to custom CSS file
+AUTO_INJECT_CSS = True  # Auto-inject CSS on page load
+```
 
 ## Notes
 

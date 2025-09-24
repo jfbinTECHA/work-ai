@@ -5,7 +5,7 @@
 
 set -e
 
-echo "🤖 Setting up Nomi Automator systemd service..."
+echo "🤖 Setting up Nomi Automator systemd service with CSS customization..."
 
 # Check if running as root or with sudo
 if [[ $EUID -eq 0 ]]; then
@@ -45,6 +45,13 @@ mkdir -p "$CURRENT_HOME/.local/share/nomi_automator"
 echo "🔧 Installing systemd service..."
 sudo cp "$SERVICE_FILE" /etc/systemd/system/
 
+# Install desktop launcher with custom icon
+echo "🎨 Installing desktop launcher with custom icon..."
+mkdir -p "$CURRENT_HOME/.local/share/applications"
+cp "nomi-automator.desktop" "$CURRENT_HOME/.local/share/applications/"
+sed -i "s|/home/sysop/CodeBERT|$CURRENT_HOME/CodeBERT|g" "$CURRENT_HOME/.local/share/applications/nomi-automator.desktop"
+chmod +x "$CURRENT_HOME/.local/share/applications/nomi-automator.desktop"
+
 # Reload systemd daemon
 echo "🔄 Reloading systemd daemon..."
 sudo systemctl daemon-reload
@@ -82,4 +89,5 @@ echo "  - Check logs if the service fails to start"
 echo "  - Ensure all dependencies are installed (pip install -r requirements.txt)"
 echo "  - Configure API keys and credentials in config.py"
 echo ""
-echo "🤖 Your AI assistant will now greet you on every boot!"
+echo "🤖 Your AI assistant with CSS customization will now greet you on every boot!"
+echo "🎨 Customize your Nomi.ai UI by editing custom_styles.css and using 'css: inject' commands!"

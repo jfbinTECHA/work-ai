@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Nomi Automator
+Comment=AI Chat Automation System
+Exec=/home/sysop/CodeBERT/nomi_automator/launch_nomi.sh
+Icon=applications-system
+Terminal=true
+Categories=Utility;Development;
+Keywords=AI;automation;chat;assistant;
+StartupNotify=false

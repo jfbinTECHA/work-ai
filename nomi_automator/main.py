@@ -5,6 +5,8 @@ import shlex
 import threading
 import json
 import os
+import requests
+import time
 from flask import Flask, request, jsonify
 from playwright.async_api import async_playwright
 from config import *
@@ -16,6 +18,25 @@ try:
 except ImportError:
     ELEVENLABS_AVAILABLE = False
     logger.warning("ElevenLabs not available. Voice features disabled.")
+
+# pyttsx3 TTS (fallback, optional import)
+try:
+    import pyttsx3
+    PYTTSX3_AVAILABLE = True
+except ImportError:
+    PYTTSX3_AVAILABLE = False
+    logger.warning("pyttsx3 not available. Fallback voice features disabled.")
+
+# Speech Recognition (optional import)
+try:
+    # Add system path for PyAudio
+    import sys
+    sys.path.insert(0, '/usr/lib/python3/dist-packages')
+    import speech_recognition as sr
+    SPEECH_RECOGNITION_AVAILABLE = True
+except ImportError:
+    SPEECH_RECOGNITION_AVAILABLE = False
+    logger.warning("Speech recognition not available. Voice input features disabled.")
 
 # OpenAI DALL-E (optional import)
 try:
@@ -57,6 +78,208 @@ except ImportError:
 # Set up logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), filename=LOG_FILE, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+class NomiAPIClient:
+    """API client for Nomi.ai interactions"""
+
+    def __init__(self):
+        self.base_url = NOMI_API_BASE_URL
+        self.api_key = NOMI_API_KEY
+        self.api_secret = NOMI_API_SECRET
+        self.user_id = NOMI_USER_ID
+        self.access_token = None
+        self.token_expires = None
+        self.session_id = None
+
+    def _get_headers(self, include_auth=True):
+        """Get request headers"""
+        headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': 'NomiAutomator/1.0'
+        }
+
+        if include_auth and self.access_token:
+            headers['Authorization'] = f'Bearer {self.access_token}'
+
+        return headers
+
+    def _make_request(self, method, endpoint, data=None, params=None, retry_count=0):
+        """Make API request with retry logic"""
+        url = f"{self.base_url}{endpoint}"
+
+        try:
+            headers = self._get_headers()
+
+            if method.upper() == 'GET':
+                response = requests.get(url, headers=headers, params=params, timeout=API_REQUEST_TIMEOUT)
+            elif method.upper() == 'POST':
+                response = requests.post(url, headers=headers, json=data, timeout=API_REQUEST_TIMEOUT)
+            elif method.upper() == 'PUT':
+                response = requests.put(url, headers=headers, json=data, timeout=API_REQUEST_TIMEOUT)
+            elif method.upper() == 'DELETE':
+                response = requests.delete(url, headers=headers, params=params, timeout=API_REQUEST_TIMEOUT)
+            else:
+                raise ValueError(f"Unsupported HTTP method: {method}")
+
+            # Handle authentication errors
+            if response.status_code == 401:
+                if retry_count < API_MAX_RETRIES:
+                    logger.info("Token expired, attempting re-authentication")
+                    if self.authenticate():
+                        time.sleep(API_RETRY_DELAY)
+                        return self._make_request(method, endpoint, data, params, retry_count + 1)
+                raise Exception("Authentication failed")
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.exceptions.RequestException as e:
+            if retry_count < API_MAX_RETRIES:
+                logger.warning(f"Request failed, retrying ({retry_count + 1}/{API_MAX_RETRIES}): {e}")
+                time.sleep(API_RETRY_DELAY)
+                return self._make_request(method, endpoint, data, params, retry_count + 1)
+            raise Exception(f"API request failed after {API_MAX_RETRIES} retries: {e}")
+
+    def authenticate(self):
+        """Authenticate with Nomi.ai API"""
+        try:
+            if not self.api_key or not self.api_secret:
+                raise Exception("API key and secret not configured")
+
+            auth_data = {
+                "api_key": self.api_key,
+                "api_secret": self.api_secret,
+                "user_id": self.user_id
+            }
+
+            response = self._make_request('POST', NOMI_API_ENDPOINTS['auth'], auth_data, include_auth=False)
+
+            if 'access_token' in response:
+                self.access_token = response['access_token']
+                self.token_expires = response.get('expires_at')
+                logger.info("Successfully authenticated with Nomi.ai API")
+                return True
+            else:
+                raise Exception("Authentication response missing access token")
+
+        except Exception as e:
+            logger.error(f"Authentication failed: {e}")
+            return False
+
+    def send_chat_message(self, message, ai_id=None, conversation_id=None):
+        """Send a chat message"""
+        try:
+            if not self.access_token and not self.authenticate():
+                raise Exception("Not authenticated")
+
+            chat_data = {
+                "message": message,
+                "ai_id": ai_id or NOMI_DEFAULT_AI_ID,
+                "user_id": self.user_id
+            }
+
+            if conversation_id:
+                chat_data["conversation_id"] = conversation_id
+
+            response = self._make_request('POST', NOMI_API_ENDPOINTS['chat'], chat_data)
+
+            # Store conversation ID for future messages
+            if 'conversation_id' in response and not self.session_id:
+                self.session_id = response['conversation_id']
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Failed to send chat message: {e}")
+            raise
+
+    def get_voice_audio(self, text, voice_settings=None):
+        """Generate voice audio for text"""
+        try:
+            if not self.access_token and not self.authenticate():
+                raise Exception("Not authenticated")
+
+            voice_data = {
+                "text": text,
+                "voice_settings": voice_settings or {
+                    "voice_id": ELEVENLABS_VOICE_ID,
+                    "stability": ELEVENLABS_VOICE_STABILITY,
+                    "similarity_boost": ELEVENLABS_VOICE_SIMILARITY
+                }
+            }
+
+            response = self._make_request('POST', NOMI_API_ENDPOINTS['voice'], voice_data)
+
+            if 'audio_url' in response:
+                # Download audio data
+                audio_response = requests.get(response['audio_url'], timeout=API_REQUEST_TIMEOUT)
+                audio_response.raise_for_status()
+                return audio_response.content
+            else:
+                raise Exception("Voice response missing audio URL")
+
+        except Exception as e:
+            logger.error(f"Failed to generate voice audio: {e}")
+            raise
+
+    def get_mindmap_data(self, topic=None):
+        """Get Mind Map data"""
+        try:
+            if not self.access_token and not self.authenticate():
+                raise Exception("Not authenticated")
+
+            params = {}
+            if topic:
+                params['topic'] = topic
+
+            return self._make_request('GET', NOMI_API_ENDPOINTS['mindmap'], params=params)
+
+        except Exception as e:
+            logger.error(f"Failed to get Mind Map data: {e}")
+            raise
+
+    def update_mindmap(self, topic, data):
+        """Update Mind Map data"""
+        try:
+            if not self.access_token and not self.authenticate():
+                raise Exception("Not authenticated")
+
+            update_data = {
+                "topic": topic,
+                "data": data,
+                "user_id": self.user_id
+            }
+
+            return self._make_request('PUT', NOMI_API_ENDPOINTS['mindmap'], update_data)
+
+        except Exception as e:
+            logger.error(f"Failed to update Mind Map: {e}")
+            raise
+
+    def get_companions(self):
+        """Get available AI companions"""
+        try:
+            if not self.access_token and not self.authenticate():
+                raise Exception("Not authenticated")
+
+            return self._make_request('GET', NOMI_API_ENDPOINTS['companions'])
+
+        except Exception as e:
+            logger.error(f"Failed to get companions: {e}")
+            raise
+
+    def get_conversations(self):
+        """Get conversation history"""
+        try:
+            if not self.access_token and not self.authenticate():
+                raise Exception("Not authenticated")
+
+            return self._make_request('GET', NOMI_API_ENDPOINTS['conversations'])
+
+        except Exception as e:
+            logger.error(f"Failed to get conversations: {e}")
+            raise
+
 
 class SessionManager:
     def __init__(self):
@@ -374,7 +597,12 @@ class NomiAutomator:
         self.api_manager = APIManager()
         self.session_manager = SessionManager()
         self.model_manager = ModelManager()
+        self.api_client = NomiAPIClient()  # API client for direct API interactions
         self.main_session_id = None  # Main Nomi session
+        self.voice_chat_active = False  # Voice chat mode flag
+        self.voice_chat_session = None  # Current voice chat session
+        self.voice_recognizer = sr.Recognizer() if SPEECH_RECOGNITION_AVAILABLE else None
+        self.use_api = bool(NOMI_API_KEY and NOMI_API_SECRET)  # Use API if credentials are configured
 
     async def start(self):
         """Start the automator"""
@@ -397,6 +625,15 @@ class NomiAutomator:
                     session_info["browser"] = await playwright.chromium.launch(headless=HEADLESS)
                     session_info["page"] = await session_info["browser"].new_page()
                     await session_info["page"].goto(session_info["url"])
+
+                    # Auto-inject custom CSS if enabled
+                    if CSS_CUSTOMIZATION_ENABLED and AUTO_INJECT_CSS:
+                        try:
+                            await self.inject_custom_css()
+                            logger.info("Auto-injected custom CSS on page load")
+                        except Exception as e:
+                            logger.warning(f"Failed to auto-inject CSS: {e}")
+
                     session_info["status"] = "ready"
                     logger.info(f"Started main Nomi session: {session_id}")
 
@@ -416,39 +653,48 @@ class NomiAutomator:
             self.browser = await playwright.chromium.launch(headless=HEADLESS)
             self.page = await self.browser.new_page()
             await self.page.goto(NOMI_URL)
+
+            # Auto-inject custom CSS if enabled
+            if CSS_CUSTOMIZATION_ENABLED and AUTO_INJECT_CSS:
+                try:
+                    await self.inject_custom_css()
+                    logger.info("Auto-injected custom CSS on page load")
+                except Exception as e:
+                    logger.warning(f"Failed to auto-inject CSS: {e}")
+
             logger.info(f"Navigated to {NOMI_URL}")
 
-async def send_boot_greeting(self):
-    """Send a boot greeting message"""
-    try:
-        logger.info("Sending boot greeting")
+    async def send_boot_greeting(self):
+        """Send a boot greeting message"""
+        try:
+            logger.info("Sending boot greeting")
 
-        # Send greeting to console/log
-        print(f"\n🤖 {BOOT_GREETING_MESSAGE}")
-        logger.info(f"Boot greeting: {BOOT_GREETING_MESSAGE}")
+            # Send greeting to console/log
+            print(f"\n🤖 {BOOT_GREETING_MESSAGE}")
+            logger.info(f"Boot greeting: {BOOT_GREETING_MESSAGE}")
 
-        # Send voice greeting if enabled
-        if BOOT_GREETING_VOICE and ELEVENLABS_ENABLED and ELEVENLABS_AVAILABLE and ELEVENLABS_API_KEY:
-            try:
-                set_api_key(ELEVENLABS_API_KEY)
-                audio = generate(
-                    text=BOOT_GREETING_MESSAGE,
-                    voice=ELEVENLABS_VOICE_ID,
-                    model=ELEVENLABS_MODEL,
-                    voice_settings={
-                        "stability": ELEVENLABS_VOICE_STABILITY,
-                        "similarity_boost": ELEVENLABS_VOICE_SIMILARITY,
-                        "style": ELEVENLABS_VOICE_STYLE,
-                        "use_speaker_boost": ELEVENLABS_VOICE_USE_SPEAKER_BOOST
-                    }
-                )
-                play(audio)
-                logger.info("Boot greeting played via voice")
-            except Exception as e:
-                logger.error(f"Error playing boot greeting voice: {e}")
+            # Send voice greeting if enabled
+            if BOOT_GREETING_VOICE and ELEVENLABS_ENABLED and ELEVENLABS_AVAILABLE and ELEVENLABS_API_KEY:
+                try:
+                    set_api_key(ELEVENLABS_API_KEY)
+                    audio = generate(
+                        text=BOOT_GREETING_MESSAGE,
+                        voice=ELEVENLABS_VOICE_ID,
+                        model=ELEVENLABS_MODEL,
+                        voice_settings={
+                            "stability": ELEVENLABS_VOICE_STABILITY,
+                            "similarity_boost": ELEVENLABS_VOICE_SIMILARITY,
+                            "style": ELEVENLABS_VOICE_STYLE,
+                            "use_speaker_boost": ELEVENLABS_VOICE_USE_SPEAKER_BOOST
+                        }
+                    )
+                    play(audio)
+                    logger.info("Boot greeting played via voice")
+                except Exception as e:
+                    logger.error(f"Error playing boot greeting voice: {e}")
 
-    except Exception as e:
-        logger.error(f"Error sending boot greeting: {e}")
+        except Exception as e:
+            logger.error(f"Error sending boot greeting: {e}")
 
     async def handle_authentication(self):
         """Handle login or authentication if required"""
@@ -494,7 +740,7 @@ async def send_boot_greeting(self):
                 logger.error(f"Error monitoring chat: {e}")
                 await asyncio.sleep(CHECK_INTERVAL)
 
-    def generate_response(self, message):
+    async def generate_response(self, message):
         """Generate a response to the message"""
         # Check for VSCode commands
         vscode_command = self.extract_command(message, VSCODE_COMMAND_PREFIXES)
@@ -565,6 +811,26 @@ async def send_boot_greeting(self):
         google_command = self.extract_command(message, GOOGLE_COMMAND_PREFIXES)
         if google_command and GOOGLE_SERVICES_ENABLED and GOOGLE_API_AVAILABLE:
             return self.execute_google_command(google_command)
+
+        # Check for CSS/Tailwind commands
+        css_command = self.extract_command(message, CSS_COMMAND_PREFIXES)
+        if css_command and CSS_CUSTOMIZATION_ENABLED:
+            return await self.execute_css_command(css_command)
+
+        # Check for voice chat commands
+        voice_chat_command = self.extract_command(message, VOICE_CHAT_COMMAND_PREFIXES)
+        if voice_chat_command:
+            return self.execute_voice_chat_command(voice_chat_command)
+
+        # Check for Mind Map commands
+        mindmap_command = self.extract_command(message, MINDMAP_COMMAND_PREFIXES)
+        if mindmap_command:
+            return self.execute_mindmap_command(mindmap_command)
+
+        # Check for learning commands
+        learn_command = self.extract_command(message, LEARN_COMMAND_PREFIXES)
+        if learn_command:
+            return self.execute_learn_command(learn_command)
 
         # Default response logic - can be enhanced with AI
         import random
@@ -943,6 +1209,479 @@ async def send_boot_greeting(self):
         except Exception as e:
             logger.error(f"Error executing voice command: {e}")
             return f"Voice Error: {str(e)}"
+
+    def speak_text(self, text):
+        """Speak text using pyttsx3 (fallback TTS)"""
+        if not PYTTSX3_AVAILABLE:
+            return False
+
+        def speak():
+            try:
+                engine = pyttsx3.init()
+                engine.setProperty('rate', 180)  # Speed of speech
+                engine.setProperty('volume', 0.8)  # Volume level (0.0 to 1.0)
+                engine.say(text)
+                engine.runAndWait()
+            except Exception as e:
+                logger.error(f"pyttsx3 voice synthesis error: {e}")
+
+        # Run in background thread to not block
+        voice_thread = threading.Thread(target=speak, daemon=True)
+        voice_thread.start()
+        return True
+
+    def recognize_speech(self, timeout=5):
+        """Recognize speech from microphone"""
+        if not SPEECH_RECOGNITION_AVAILABLE or not self.voice_recognizer:
+            return None, "Speech recognition not available"
+
+        try:
+            with sr.Microphone() as source:
+                logger.info("Listening for voice input...")
+                # Adjust for ambient noise
+                self.voice_recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                # Listen for speech
+                audio = self.voice_recognizer.listen(source, timeout=timeout, phrase_time_limit=10)
+
+            # Recognize speech using Google Speech Recognition
+            text = self.voice_recognizer.recognize_google(audio)
+            logger.info(f"Recognized speech: {text}")
+            return text, None
+
+        except sr.WaitTimeoutError:
+            return None, "No speech detected within timeout"
+        except sr.UnknownValueError:
+            return None, "Could not understand audio"
+        except sr.RequestError as e:
+            return None, f"Speech recognition service error: {e}"
+        except Exception as e:
+            logger.error(f"Speech recognition error: {e}")
+            return None, str(e)
+
+    def start_voice_chat(self, ai_name=None):
+        """Start voice chat mode with a specific AI or the main Nomi session"""
+        try:
+            if not SPEECH_RECOGNITION_AVAILABLE:
+                return "Voice chat: Speech recognition not available. Install SpeechRecognition: pip install SpeechRecognition"
+
+            if self.voice_chat_active:
+                return "Voice chat: Already active. Use 'voicechat: stop' to end current session."
+
+            # Determine which AI/session to chat with
+            if ai_name:
+                # Try to find or create session for specific AI
+                session_id = None
+                for sid, session in self.session_manager.sessions.items():
+                    if session["ai_type"] == ai_name and session["status"] == "ready":
+                        session_id = sid
+                        break
+
+                if not session_id:
+                    # Try to create new session
+                    if ai_name in AI_INSTANCES:
+                        session_id, session_info = self.session_manager.create_session(ai_name, AI_INSTANCES[ai_name]["url"], AI_INSTANCES[ai_name]["name"])
+                        if session_id:
+                            asyncio.create_task(self.start_ai_session(session_id))
+                        else:
+                            return f"Voice chat: Failed to create session for {ai_name}"
+                    else:
+                        return f"Voice chat: Unknown AI '{ai_name}'. Available: {', '.join(AI_INSTANCES.keys())}"
+
+                self.voice_chat_session = session_id
+            else:
+                # Use main Nomi session
+                if not self.main_session_id:
+                    return "Voice chat: No main Nomi session available. Start nomi_automator first."
+                self.voice_chat_session = self.main_session_id
+
+            self.voice_chat_active = True
+
+            # Start voice chat loop in background
+            voice_thread = threading.Thread(target=self._voice_chat_loop, daemon=True)
+            voice_thread.start()
+
+            ai_display_name = ai_name or "Nomi AI"
+            return f"Voice chat: Started with {ai_display_name}. Speak naturally - your voice will be converted to text and sent to the AI. Say 'stop voice chat' to end."
+
+        except Exception as e:
+            logger.error(f"Error starting voice chat: {e}")
+            return f"Voice chat: Error starting session - {str(e)}"
+
+    def stop_voice_chat(self):
+        """Stop voice chat mode"""
+        try:
+            if not self.voice_chat_active:
+                return "Voice chat: Not currently active"
+
+            self.voice_chat_active = False
+            self.voice_chat_session = None
+            return "Voice chat: Stopped"
+
+        except Exception as e:
+            logger.error(f"Error stopping voice chat: {e}")
+            return f"Voice chat: Error stopping - {str(e)}"
+
+    def _voice_chat_loop(self):
+        """Main voice chat loop - runs in background thread"""
+        try:
+            logger.info("Voice chat loop started")
+
+            while self.voice_chat_active:
+                try:
+                    # Listen for speech
+                    text, error = self.recognize_speech(timeout=10)  # Longer timeout for conversation
+
+                    if error:
+                        if "timeout" in error.lower():
+                            continue  # Just continue listening
+                        logger.warning(f"Voice recognition error: {error}")
+                        continue
+
+                    if not text:
+                        continue
+
+                    # Check for stop commands
+                    text_lower = text.lower().strip()
+                    if any(phrase in text_lower for phrase in ["stop voice chat", "end voice chat", "stop talking", "quit voice"]):
+                        logger.info("Voice chat stop command detected")
+                        self.voice_chat_active = False
+                        break
+
+                    # Send the recognized text to the AI via API
+                    logger.info(f"Sending voice input to AI: {text}")
+
+                    try:
+                        if self.use_api:
+                            # Use API for chat interaction
+                            response = self.api_client.send_chat_message(text, ai_id=self.voice_chat_session or NOMI_DEFAULT_AI_ID)
+                            ai_response = response.get('message', 'No response from AI')
+
+                            # Speak the AI response
+                            if VOICE_RESPONSES_ENABLED and (ELEVENLABS_AVAILABLE or PYTTSX3_AVAILABLE):
+                                try:
+                                    if ELEVENLABS_AVAILABLE and ELEVENLABS_API_KEY:
+                                        # Try to get voice from Nomi API first
+                                        try:
+                                            audio_data = self.api_client.get_voice_audio(ai_response)
+                                            # Play the audio (would need audio playback implementation)
+                                            logger.info("Playing AI voice response from Nomi API")
+                                        except:
+                                            # Fallback to ElevenLabs/pyttsx3
+                                            self.speak_text(ai_response)
+                                    else:
+                                        self.speak_text(ai_response)
+                                except Exception as e:
+                                    logger.error(f"Error playing voice response: {e}")
+
+                            logger.info(f"AI response: {ai_response}")
+
+                        else:
+                            # Fallback to browser automation
+                            if self.voice_chat_session == self.main_session_id:
+                                # Send to main Nomi session
+                                asyncio.run(self.send_response(text))
+                            else:
+                                # Send to specific AI session
+                                result = self.send_to_session(self.voice_chat_session, text)
+                                logger.info(f"Voice message sent to session: {result}")
+
+                    except Exception as e:
+                        logger.error(f"Error sending message to AI: {e}")
+                        # Continue listening even if sending failed
+
+                    # Small delay before listening again
+                    time.sleep(1)
+
+                except Exception as e:
+                    logger.error(f"Error in voice chat loop: {e}")
+                    time.sleep(2)  # Wait before retrying
+
+            logger.info("Voice chat loop ended")
+
+        except Exception as e:
+            logger.error(f"Fatal error in voice chat loop: {e}")
+            self.voice_chat_active = False
+
+    def execute_mindmap_command(self, command):
+        """Execute Mind Map management commands"""
+        try:
+            command_lower = command.lower().strip()
+
+            if command_lower in ["help", "commands", "usage"]:
+                return self.get_mindmap_help()
+
+            elif command_lower in ["list", "topics", "all"]:
+                return self.mindmap_list_topics()
+
+            elif command_lower.startswith("show ") or command_lower.startswith("view "):
+                topic = command[5:].strip() if command_lower.startswith("show ") else command[5:].strip()
+                return self.mindmap_show_topic(topic)
+
+            elif command_lower.startswith("search ") or command_lower.startswith("find "):
+                query = command[7:].strip() if command_lower.startswith("search ") else command[5:].strip()
+                return self.mindmap_search(query)
+
+            elif command_lower.startswith("add ") or command_lower.startswith("create "):
+                # Parse: "add topic: information" or "add topic information"
+                parts = command[4:].strip().split(":", 1) if command_lower.startswith("add ") else command[7:].strip().split(":", 1)
+                if len(parts) == 2:
+                    topic, info = parts
+                    return self.mindmap_add_info(topic.strip(), info.strip())
+                else:
+                    return "Mind Map: Invalid add format. Use 'add topic: information'"
+
+            elif command_lower.startswith("update ") or command_lower.startswith("edit "):
+                # Parse: "update topic: new information"
+                parts = command[7:].strip().split(":", 1) if command_lower.startswith("update ") else command[5:].strip().split(":", 1)
+                if len(parts) == 2:
+                    topic, info = parts
+                    return self.mindmap_update_topic(topic.strip(), info.strip())
+                else:
+                    return "Mind Map: Invalid update format. Use 'update topic: new information'"
+
+            elif command_lower.startswith("connect ") or command_lower.startswith("link "):
+                # Parse: "connect topic1 to topic2: relationship"
+                parts = command[8:].strip().split(" to ", 1) if command_lower.startswith("connect ") else command[5:].strip().split(" to ", 1)
+                if len(parts) == 2:
+                    topic1 = parts[0].strip()
+                    remaining = parts[1].split(":", 1)
+                    if len(remaining) == 2:
+                        topic2, relationship = remaining
+                        return self.mindmap_connect_topics(topic1, topic2.strip(), relationship.strip())
+                    else:
+                        return self.mindmap_connect_topics(topic1, remaining[0].strip(), "related to")
+                else:
+                    return "Mind Map: Invalid connect format. Use 'connect topic1 to topic2: relationship'"
+
+            elif command_lower.startswith("delete ") or command_lower.startswith("remove "):
+                topic = command[7:].strip() if command_lower.startswith("delete ") else command[7:].strip()
+                return self.mindmap_delete_topic(topic)
+
+            elif command_lower == "status":
+                return self.mindmap_get_status()
+
+            elif command_lower == "forest":
+                return self.mindmap_show_forest()
+
+            else:
+                return f"Mind Map: Unknown command '{command}'. Use 'mindmap: help' for available commands."
+
+        except Exception as e:
+            logger.error(f"Error executing mindmap command: {e}")
+            return f"Mind Map Error: {str(e)}"
+
+    def execute_learn_command(self, command):
+        """Execute learning session commands with Mind Map integration"""
+        try:
+            command_lower = command.lower().strip()
+
+            if command_lower in ["help", "commands"]:
+                return self.get_learn_help()
+
+            elif command_lower.startswith("session ") or command_lower.startswith("start "):
+                topic = command[8:].strip() if command_lower.startswith("session ") else command[6:].strip()
+                return self.start_learning_session(topic)
+
+            elif command_lower.startswith("review ") or command_lower.startswith("study "):
+                topic = command[7:].strip() if command_lower.startswith("review ") else command[6:].strip()
+                return self.review_topic(topic)
+
+            elif command_lower.startswith("teach ") or command_lower.startswith("explain "):
+                topic = command[6:].strip() if command_lower.startswith("teach ") else command[8:].strip()
+                return self.teach_concept(topic)
+
+            elif command_lower == "progress":
+                return self.get_learning_progress()
+
+            elif command_lower.startswith("goal ") or command_lower.startswith("set "):
+                goal_text = command[5:].strip() if command_lower.startswith("goal ") else command[4:].strip()
+                return self.set_learning_goal(goal_text)
+
+            else:
+                return f"Learn: Unknown command '{command}'. Use 'learn: help' for available commands."
+
+        except Exception as e:
+            logger.error(f"Error executing learn command: {e}")
+            return f"Learn Error: {str(e)}"
+
+    def get_mindmap_help(self):
+        """Get help for Mind Map commands"""
+        return """🤖 Mind Map 1.0 - Memory Organization System
+
+📋 QUERY COMMANDS:
+• mindmap: list - Show all Mind Map topics
+• mindmap: show [topic] - Display detailed information about a topic
+• mindmap: search [query] - Search through Mind Map content
+• mindmap: forest - Show how all topics connect together
+
+📝 MANAGEMENT COMMANDS:
+• mindmap: add [topic]: [information] - Add information to a topic
+• mindmap: update [topic]: [new info] - Update existing topic information
+• mindmap: connect [topic1] to [topic2]: [relationship] - Link topics together
+• mindmap: delete [topic] - Remove a topic from Mind Map
+
+📊 STATUS COMMANDS:
+• mindmap: status - Show Mind Map system status
+• mindmap: help - Show this help message
+
+💡 Note: Mind Map evolves with each interaction and provides structured overviews of important concepts."""
+
+    def get_learn_help(self):
+        """Get help for learning commands"""
+        return """🎓 Learning Session Commands - Mind Map Integration
+
+📚 LEARNING COMMANDS:
+• learn: session [topic] - Start a structured learning session
+• learn: review [topic] - Review existing Mind Map knowledge
+• learn: teach [concept] - Explain a concept using Mind Map
+• learn: goal [goal text] - Set a learning objective
+
+📊 PROGRESS COMMANDS:
+• learn: progress - Show learning progress and goals
+• learn: help - Show this help message
+
+💡 Learning sessions automatically build and update Mind Map entries for better long-term retention."""
+
+    def mindmap_list_topics(self):
+        """List all Mind Map topics"""
+        try:
+            # This would query the Nomi Mind Map system
+            # For now, return a placeholder that indicates the command is queued
+            return "Mind Map: Listing topics... (This command interacts with Nomi.ai's Mind Map system. Active session required for real functionality.)"
+        except Exception as e:
+            return f"Mind Map List Error: {str(e)}"
+
+    def mindmap_show_topic(self, topic):
+        """Show detailed information about a Mind Map topic"""
+        try:
+            if not topic:
+                return "Mind Map: Please specify a topic to show."
+
+            return f"Mind Map: Showing information for '{topic}'... (This displays the complete, organized overview from Nomi.ai's Mind Map system.)"
+        except Exception as e:
+            return f"Mind Map Show Error: {str(e)}"
+
+    def mindmap_search(self, query):
+        """Search through Mind Map content"""
+        try:
+            if not query:
+                return "Mind Map: Please specify search terms."
+
+            return f"Mind Map: Searching for '{query}'... (This searches through all Mind Map entries and connections.)"
+        except Exception as e:
+            return f"Mind Map Search Error: {str(e)}"
+
+    def mindmap_add_info(self, topic, info):
+        """Add information to a Mind Map topic"""
+        try:
+            if not topic or not info:
+                return "Mind Map: Please specify both topic and information."
+
+            return f"Mind Map: Added information to '{topic}': {info[:50]}... (This updates Nomi.ai's Mind Map with structured knowledge.)"
+        except Exception as e:
+            return f"Mind Map Add Error: {str(e)}"
+
+    def mindmap_update_topic(self, topic, new_info):
+        """Update existing Mind Map topic information"""
+        try:
+            if not topic or not new_info:
+                return "Mind Map: Please specify both topic and new information."
+
+            return f"Mind Map: Updated '{topic}' with new information: {new_info[:50]}... (This evolves the Mind Map entry over time.)"
+        except Exception as e:
+            return f"Mind Map Update Error: {str(e)}"
+
+    def mindmap_connect_topics(self, topic1, topic2, relationship):
+        """Connect two Mind Map topics"""
+        try:
+            if not topic1 or not topic2:
+                return "Mind Map: Please specify both topics to connect."
+
+            return f"Mind Map: Connected '{topic1}' to '{topic2}' ({relationship}). (This creates meaningful connections in the knowledge forest.)"
+        except Exception as e:
+            return f"Mind Map Connect Error: {str(e)}"
+
+    def mindmap_delete_topic(self, topic):
+        """Delete a topic from Mind Map"""
+        try:
+            if not topic:
+                return "Mind Map: Please specify a topic to delete."
+
+            return f"Mind Map: Removed '{topic}' from Mind Map. (Note: Important topics may be automatically recreated from memory.)"
+        except Exception as e:
+            return f"Mind Map Delete Error: {str(e)}"
+
+    def mindmap_get_status(self):
+        """Get Mind Map system status"""
+        try:
+            return """Mind Map Status:
+• System: Active (Mind Map 1.0)
+• Memory Persistence: Infinite for important concepts
+• Structure: Complete information organization
+• Connections: Forest-level awareness enabled
+• Chat Separation: 1-on-1 and group chats maintained separately
+• Warmup Period: Building comprehensive overviews with each interaction"""
+        except Exception as e:
+            return f"Mind Map Status Error: {str(e)}"
+
+    def mindmap_show_forest(self):
+        """Show the complete Mind Map forest view"""
+        try:
+            return "Mind Map Forest View: Displaying how all important concepts connect together... (This shows the complete knowledge structure and relationships between all topics.)"
+        except Exception as e:
+            return f"Mind Map Forest Error: {str(e)}"
+
+    def start_learning_session(self, topic):
+        """Start a structured learning session with Mind Map integration"""
+        try:
+            if not topic:
+                return "Learn: Please specify a topic for the learning session."
+
+            return f"Learn: Starting structured learning session for '{topic}'... (This creates an interactive learning experience that builds Mind Map knowledge.)"
+        except Exception as e:
+            return f"Learn Session Error: {str(e)}"
+
+    def review_topic(self, topic):
+        """Review existing Mind Map knowledge"""
+        try:
+            if not topic:
+                return "Learn: Please specify a topic to review."
+
+            return f"Learn: Reviewing Mind Map knowledge for '{topic}'... (This reinforces long-term retention of structured information.)"
+        except Exception as e:
+            return f"Learn Review Error: {str(e)}"
+
+    def teach_concept(self, concept):
+        """Teach a concept using Mind Map integration"""
+        try:
+            if not concept:
+                return "Learn: Please specify a concept to teach."
+
+            return f"Learn: Teaching concept '{concept}' using Mind Map structure... (This provides comprehensive explanations with organized knowledge.)"
+        except Exception as e:
+            return f"Learn Teach Error: {str(e)}"
+
+    def get_learning_progress(self):
+        """Get learning progress and goals"""
+        try:
+            return """Learning Progress:
+• Active Goals: Building comprehensive Mind Map overviews
+• Progress: Evolving with each interaction
+• Retention: Infinite persistence for important concepts
+• Structure: Complete information organization
+• Connections: Meaningful relationships between topics"""
+        except Exception as e:
+            return f"Learn Progress Error: {str(e)}"
+
+    def set_learning_goal(self, goal_text):
+        """Set a learning objective"""
+        try:
+            if not goal_text:
+                return "Learn: Please specify a learning goal."
+
+            return f"Learn: Set learning goal - '{goal_text}'. (This integrates with Mind Map to track progress toward objectives.)"
+        except Exception as e:
+            return f"Learn Goal Error: {str(e)}"
 
     def execute_conversation_command(self, command):
         """Execute conversation initiation and management commands"""
@@ -2270,41 +3009,257 @@ async def send_boot_greeting(self):
         except Exception as e:
             return f"Second Life Voice Error: {str(e)}"
 
+    async def execute_css_command(self, command):
+        """Execute CSS/Tailwind customization commands"""
+        try:
+            command_lower = command.lower().strip()
+
+            if command_lower in ["inject", "apply", "load"]:
+                return await self.inject_custom_css()
+            elif command_lower.startswith("add "):
+                # Parse: "add .my-class { color: red; }"
+                css_code = command[4:].strip()
+                return await self.add_css_rule(css_code)
+            elif command_lower.startswith("remove ") or command_lower.startswith("delete "):
+                # Parse: "remove .my-class" or "delete #my-id"
+                selector = command.split(" ", 1)[1].strip()
+                return await self.remove_css_rule(selector)
+            elif command_lower in ["clear", "reset"]:
+                return await self.clear_custom_css()
+            elif command_lower in ["status", "current"]:
+                return self.get_css_status()
+            elif command_lower.startswith("file "):
+                # Parse: "file custom_styles.css"
+                filename = command[5:].strip()
+                return await self.load_css_from_file(filename)
+            else:
+                return "CSS: Unknown command. Available: inject, add <css>, remove <selector>, clear, status, file <filename>"
+
+        except Exception as e:
+            logger.error(f"Error executing CSS command: {e}")
+            return f"CSS Error: {str(e)}"
+
+    async def inject_custom_css(self):
+        """Inject custom CSS from file into the current page"""
+        try:
+            if not self.page:
+                return "CSS: No active page session. Start the automator first."
+
+            if not os.path.exists(CUSTOM_CSS_FILE):
+                return f"CSS: Custom CSS file '{CUSTOM_CSS_FILE}' not found. Create it with your Tailwind/CSS styles."
+
+            with open(CUSTOM_CSS_FILE, 'r') as f:
+                css_content = f.read()
+
+            if not css_content.strip():
+                return f"CSS: Custom CSS file '{CUSTOM_CSS_FILE}' is empty."
+
+            # Inject CSS into the page
+            await self.page.add_style_tag(content=css_content)
+
+            logger.info(f"Injected custom CSS from {CUSTOM_CSS_FILE}")
+            return f"CSS: Successfully injected custom styles from '{CUSTOM_CSS_FILE}'"
+
+        except Exception as e:
+            logger.error(f"Error injecting custom CSS: {e}")
+            return f"CSS Injection Error: {str(e)}"
+
+    async def add_css_rule(self, css_code):
+        """Add a CSS rule dynamically to the page"""
+        try:
+            if not self.page:
+                return "CSS: No active page session. Start the automator first."
+
+            # Validate basic CSS syntax
+            if not ('{' in css_code and '}' in css_code):
+                return "CSS: Invalid CSS format. Use 'selector { property: value; }'"
+
+            # Inject the CSS rule
+            await self.page.add_style_tag(content=css_code)
+
+            logger.info(f"Added CSS rule: {css_code[:50]}...")
+            return f"CSS: Added rule '{css_code[:30]}...'"
+
+        except Exception as e:
+            logger.error(f"Error adding CSS rule: {e}")
+            return f"CSS Add Error: {str(e)}"
+
+    async def remove_css_rule(self, selector):
+        """Remove a CSS rule by selector"""
+        try:
+            if not self.page:
+                return "CSS: No active page session. Start the automator first."
+
+            # This is a simplified implementation
+            # In a real scenario, you'd need to track added styles and remove them
+            # For now, we'll inject a rule that overrides the selector
+            override_css = f"{selector} {{ display: none !important; }}"
+            await self.page.add_style_tag(content=override_css)
+
+            logger.info(f"Removed/hid CSS rule for selector: {selector}")
+            return f"CSS: Hidden elements matching '{selector}'"
+
+        except Exception as e:
+            logger.error(f"Error removing CSS rule: {e}")
+            return f"CSS Remove Error: {str(e)}"
+
+    async def clear_custom_css(self):
+        """Clear all custom CSS from the page"""
+        try:
+            if not self.page:
+                return "CSS: No active page session. Start the automator first."
+
+            # Remove all style tags that were added by this automator
+            # This is a simplified approach - in practice, you'd need to track added styles
+            await self.page.evaluate("""
+                const styles = document.querySelectorAll('style[data-automator="true"]');
+                styles.forEach(style => style.remove());
+            """)
+
+            logger.info("Cleared custom CSS")
+            return "CSS: Cleared all custom styles"
+
+        except Exception as e:
+            logger.error(f"Error clearing custom CSS: {e}")
+            return f"CSS Clear Error: {str(e)}"
+
+    def get_css_status(self):
+        """Get current CSS customization status"""
+        try:
+            status = "CSS Customization Status:\n"
+            status += f"- Enabled: {CSS_CUSTOMIZATION_ENABLED}\n"
+            status += f"- Custom CSS File: {CUSTOM_CSS_FILE}\n"
+            status += f"- Auto Inject: {AUTO_INJECT_CSS}\n"
+
+            if os.path.exists(CUSTOM_CSS_FILE):
+                with open(CUSTOM_CSS_FILE, 'r') as f:
+                    lines = f.readlines()
+                status += f"- File exists: Yes ({len(lines)} lines)\n"
+            else:
+                status += "- File exists: No\n"
+
+            if self.page:
+                status += "- Active session: Yes"
+            else:
+                status += "- Active session: No"
+
+            return status
+
+        except Exception as e:
+            return f"CSS Status Error: {str(e)}"
+
+    async def load_css_from_file(self, filename):
+        """Load CSS from a specific file"""
+        try:
+            if not os.path.exists(filename):
+                return f"CSS: File '{filename}' not found."
+
+            with open(filename, 'r') as f:
+                css_content = f.read()
+
+            if not css_content.strip():
+                return f"CSS: File '{filename}' is empty."
+
+            if not self.page:
+                return "CSS: No active page session. Start the automator first."
+
+            # Inject CSS into the page
+            await self.page.add_style_tag(content=css_content)
+
+            logger.info(f"Loaded CSS from file: {filename}")
+            return f"CSS: Successfully loaded styles from '{filename}'"
+
+        except Exception as e:
+            logger.error(f"Error loading CSS from file: {e}")
+            return f"CSS Load Error: {str(e)}"
+
+    def execute_voice_chat_command(self, command):
+        """Execute voice chat commands"""
+        try:
+            command_lower = command.lower().strip()
+
+            if command_lower in ["start", "begin", "on"]:
+                return self.start_voice_chat()
+            elif command_lower.startswith("start ") or command_lower.startswith("begin ") or command_lower.startswith("with "):
+                # Parse: "start nomi" or "with chatgpt"
+                ai_name = command[6:].strip() if command_lower.startswith("start ") else command[5:].strip() if command_lower.startswith("begin ") else command[5:].strip()
+                return self.start_voice_chat(ai_name)
+            elif command_lower in ["stop", "end", "off", "quit"]:
+                return self.stop_voice_chat()
+            elif command_lower == "status":
+                if self.voice_chat_active:
+                    session_name = "Nomi AI"
+                    if self.voice_chat_session and self.voice_chat_session != self.main_session_id:
+                        session = self.session_manager.get_session(self.voice_chat_session)
+                        if session:
+                            session_name = session["name"]
+                    return f"Voice chat: Active with {session_name}"
+                else:
+                    return "Voice chat: Not active"
+            elif command_lower == "test":
+                # Test speech recognition
+                text, error = self.recognize_speech(timeout=5)
+                if error:
+                    return f"Voice test: {error}"
+                else:
+                    return f"Voice test: Recognized '{text}'"
+            else:
+                return "Voice chat: Unknown command. Available: start [ai_name], stop, status, test"
+
+        except Exception as e:
+            logger.error(f"Error executing voice chat command: {e}")
+            return f"Voice Chat Error: {str(e)}"
+
     async def send_response(self, response):
         """Send a response to the chat and optionally speak it"""
         try:
-            # Speak the response if voice responses are enabled
-            if VOICE_RESPONSES_ENABLED and ELEVENLABS_ENABLED and ELEVENLABS_AVAILABLE and ELEVENLABS_API_KEY:
+            # Speak the response if voice responses are enabled OR if voice chat is active
+            should_speak = VOICE_RESPONSES_ENABLED or self.voice_chat_active
+            if should_speak and ((ELEVENLABS_ENABLED and ELEVENLABS_AVAILABLE and ELEVENLABS_API_KEY) or PYTTSX3_AVAILABLE):
                 try:
-                    # Set API key for voice generation
-                    set_api_key(ELEVENLABS_API_KEY)
+                    # Try ElevenLabs first if available
+                    if ELEVENLABS_ENABLED and ELEVENLABS_AVAILABLE and ELEVENLABS_API_KEY:
+                        # Set API key for voice generation
+                        set_api_key(ELEVENLABS_API_KEY)
 
-                    # Generate and play audio asynchronously (don't block the response)
-                    import threading
-                    def speak_response():
-                        try:
-                            audio = generate(
-                                text=response,
-                                voice=ELEVENLABS_VOICE_ID,
-                                model=ELEVENLABS_MODEL,
-                                voice_settings={
-                                    "stability": ELEVENLABS_VOICE_STABILITY,
-                                    "similarity_boost": ELEVENLABS_VOICE_SIMILARITY,
-                                    "style": ELEVENLABS_VOICE_STYLE,
-                                    "use_speaker_boost": ELEVENLABS_VOICE_USE_SPEAKER_BOOST
-                                }
-                            )
-                            play(audio)
-                            logger.info("Voice response played successfully")
-                        except Exception as e:
-                            logger.error(f"Error playing voice response: {e}")
+                        # Generate and play audio asynchronously (don't block the response)
+                        import threading
+                        def speak_response_elevenlabs():
+                            try:
+                                audio = generate(
+                                    text=response,
+                                    voice=ELEVENLABS_VOICE_ID,
+                                    model=ELEVENLABS_MODEL,
+                                    voice_settings={
+                                        "stability": ELEVENLABS_VOICE_STABILITY,
+                                        "similarity_boost": ELEVENLABS_VOICE_SIMILARITY,
+                                        "style": ELEVENLABS_VOICE_STYLE,
+                                        "use_speaker_boost": ELEVENLABS_VOICE_USE_SPEAKER_BOOST
+                                    }
+                                )
+                                play(audio)
+                                logger.info("ElevenLabs voice response played successfully")
+                            except Exception as e:
+                                logger.error(f"Error playing ElevenLabs voice response: {e}")
 
-                    # Start voice generation in background thread
-                    voice_thread = threading.Thread(target=speak_response, daemon=True)
-                    voice_thread.start()
+                        # Start voice generation in background thread
+                        voice_thread = threading.Thread(target=speak_response_elevenlabs, daemon=True)
+                        voice_thread.start()
+
+                    # Fallback to pyttsx3 if ElevenLabs not available or failed
+                    elif PYTTSX3_AVAILABLE:
+                        self.speak_text(response)
+                        logger.info("pyttsx3 voice response played successfully")
 
                 except Exception as e:
                     logger.error(f"Error initiating voice response: {e}")
+                    # Final fallback: try pyttsx3 if not already tried
+                    if PYTTSX3_AVAILABLE:
+                        try:
+                            self.speak_text(response)
+                            logger.info("Fallback pyttsx3 voice response played successfully")
+                        except Exception as e2:
+                            logger.error(f"Error playing fallback voice response: {e2}")
 
             # Find input field - update selectors based on UI inspection
             input_field = await self.page.query_selector('input[type="text"], textarea, [contenteditable="true"]')

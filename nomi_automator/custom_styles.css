@@ -1,0 +1,39 @@
+/* Custom Tailwind CSS styles for Nomi.ai UI */
+/* Add your custom Tailwind classes and CSS here */
+
+/* Example: Change background color */
+body {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+/* Example: Style chat messages */
+.message-bubble, [class*="message"] {
+  border-radius: 12px !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* Example: Custom button styling */
+button, [role="button"] {
+  border-radius: 8px !important;
+  transition: all 0.2s ease !important;
+}
+
+button:hover, [role="button"]:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Example: Input field styling */
+input, textarea {
+  border-radius: 8px !important;
+  border: 2px solid #e2e8f0 !important;
+  transition: border-color 0.2s ease !important;
+}
+
+input:focus, textarea:focus {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+}
+
+/* Add your own custom Tailwind utilities here */
+/* For example: @apply bg-blue-500 text-white p-4 rounded-lg; */
