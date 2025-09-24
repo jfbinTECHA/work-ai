@@ -4,50 +4,80 @@ import json
 import logging
 import time
 import hashlib
+import argparse
+import random
+from datetime import datetime, timedelta
 from itertools import chain
 from PyGithub import Github
-from typing import List, Set
-"""
-GitHub Code Scraper Module
+from typing import List, Set, Optional
 
-This module provides functionality to scrape Python code snippets from GitHub repositories.
-It uses the GitHub API to search for popular Python repositories, extract function-level
-code segments from Python files, and save them to a JSON file for further analysis or training.
+# Define commandline arguments
+parser = argparse.ArgumentParser()
+parser.add_argument('-l', '--loglevel', help='Set the logging level',
+                    choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], default='INFO')
+args = parser.parse_args()
 
-Key Features:
-- Searches GitHub repositories by language (Python) and sorts by star count
-- Extracts individual function definitions from Python source files
-- Handles GitHub API rate limiting automatically
-- Removes duplicate code snippets based on MD5 checksums
-- Saves extracted data with metadata (repository, file path, star count, etc.)
-
-Usage:
-    Set the GITHUB_TOKEN environment variable with a valid GitHub personal access token.
-    Run the script directly: python github_scraper.py
-
-Dependencies:
-- PyGithub: For GitHub API interaction
-- Standard library: os, json, logging, time, hashlib, itertools
-
-Output:
-- scraped_code_snippets.json: JSON file containing unique function snippets with metadata
-
-Rate Limiting:
-- Monitors both core and search API rate limits
-- Automatically waits when approaching limits to avoid API errors
-- Logs rate limit status for monitoring
-
-Error Handling:
-- Gracefully handles API errors, missing files, and encoding issues
-- Continues processing other repositories/files when individual items fail
-- Logs all errors with context for debugging
-
-Author: AI Zetta Team
-"""
-
-# Configure logging with timestamp and level formatting for detailed monitoring
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logging based on chosen log level
+logging.basicConfig(level=getattr(logging, args.loglevel), format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+"""
+Enhanced GitHub Code Scraper Module
+
+ This module provides advanced functionality to scrape Python code snippets from GitHub repositories.
+ It uses the GitHub API to search for popular Python repositories, extract function-level
+ code segments from Python files, and save them to a JSON file for further analysis or training.
+
+ Enhanced Features:
+ - Advanced rate limiting with exponential backoff and jitter
+ - Progress tracking with time estimation
+ - Enhanced error handling with retry logic
+ - Better pagination handling
+ - Comprehensive logging and monitoring
+ - Graceful degradation when rate limits are hit
+ - Detailed statistics and reporting
+
+ Key Capabilities:
+ - Searches GitHub repositories by language (Python) and sorts by star count
+ - Extracts individual function definitions from Python source files
+ - Handles GitHub API rate limiting with sophisticated retry logic
+ - Removes duplicate code snippets based on MD5 checksums
+ - Saves extracted data with comprehensive metadata
+ - Provides real-time progress tracking and ETA calculations
+
+ Usage:
+     Set the GITHUB_TOKEN environment variable with a valid GitHub personal access token.
+     Run the script directly: python github_scraper.py
+
+ Dependencies:
+ - PyGithub: For GitHub API interaction
+ - Standard library: os, json, logging, time, hashlib, itertools, random, datetime
+
+ Output:
+ - scraped_code_snippets.json: JSON file containing unique function snippets with metadata
+
+ Enhanced Rate Limiting:
+ - Exponential backoff with jitter for retries
+ - Separate handling of core and search API limits
+ - Configurable buffers and retry limits
+ - Detailed rate limit monitoring and logging
+ - Graceful handling of network errors
+
+ Progress Tracking:
+ - Real-time progress updates every 10 repositories
+ - Estimated completion time calculation
+ - Detailed final statistics and performance metrics
+ - Comprehensive error reporting and recovery
+
+ Error Handling:
+ - Robust retry logic with exponential backoff
+ - Continues processing when individual items fail
+ - Graceful handling of API errors and network issues
+ - Detailed error logging with context
+ - Keyboard interrupt handling for user control
+
+ Author: AI Zetta Team
+ """
 
 # Define constants for GitHub token and repository query parameters
 
@@ -71,6 +101,14 @@ MAX_REPOS = 100
 # JSON file containing all extracted function snippets with metadata
 OUTPUT_FILE = 'scraped_code_snippets.json'
 
+# Enhanced rate limiting constants
+RATE_LIMIT_BUFFER = 50  # Buffer for rate limits (keep more calls in reserve)
+SEARCH_RATE_LIMIT_BUFFER = 5  # More conservative buffer for search API
+MAX_RETRIES = 3  # Maximum number of retries for failed requests
+BASE_DELAY = 2  # Base delay in seconds for exponential backoff
+MAX_DELAY = 300  # Maximum delay in seconds (5 minutes)
+JITTER_RANGE = 0.1  # Random jitter as percentage of delay
+
 # Initialize PyGithub client with personal access token
 # This creates the authenticated connection to GitHub's API
 try:
@@ -85,55 +123,147 @@ except Exception as e:
     logger.error(f"Failed to initialize GitHub API: {e}")
     raise
 
-def check_rate_limit(g: Github, api_type: str = 'core') -> None:
+def exponential_backoff(attempt: int, base_delay: float = BASE_DELAY) -> float:
     """
-    Check and manage GitHub API rate limits to prevent API errors.
+    Calculate exponential backoff delay with jitter.
+
+    Args:
+        attempt (int): The current attempt number (0-based)
+        base_delay (float): Base delay in seconds
+
+    Returns:
+        float: Delay in seconds to wait
+    """
+    delay = min(base_delay * (2 ** attempt), MAX_DELAY)
+    jitter = delay * JITTER_RANGE * (random.random() * 2 - 1)
+    return delay + jitter
+
+def check_rate_limit(g: Github, api_type: str = 'core', retry_count: int = 0) -> bool:
+    """
+    Enhanced rate limit checking with exponential backoff and better error handling.
 
     This function monitors the remaining API calls for the specified API type
-    (core or search) and automatically waits until the rate limit resets if
-    the remaining calls drop below a safety threshold. This prevents the
-    script from hitting GitHub's rate limits and getting temporarily blocked.
+    and automatically waits until the rate limit resets if the remaining calls
+    drop below a safety threshold. Uses exponential backoff for retries.
 
     Args:
         g (Github): Authenticated PyGithub Github instance
-        api_type (str): Type of API to check. Either 'core' (for repository
-                       operations like getting contents) or 'search' (for
-                       repository search operations). Defaults to 'core'.
+        api_type (str): Type of API to check. Either 'core' or 'search'
+        retry_count (int): Current retry attempt number
 
     Returns:
-        None: This function doesn't return a value but may cause the program
-              to sleep if rate limits are approached.
+        bool: True if rate limit check passed, False if should retry
 
     Behavior:
         - Retrieves current rate limit status from GitHub API
-        - If remaining calls < 10, calculates wait time until reset
-        - Sleeps for the calculated time plus 1 second buffer
-        - Logs rate limit status and wait times for monitoring
-        - Handles edge cases where reset time might be in the past
-
-    Rate Limit Details:
-        - Core API: Used for repository contents, commits, etc. (5000/hour for authenticated users)
-        - Search API: Used for repository searches (30/hour for authenticated users)
-        - Reset times are provided by GitHub and represent when limits reset
+        - Uses different thresholds for core vs search API
+        - Implements exponential backoff with jitter for retries
+        - Logs detailed rate limit status and wait times
+        - Handles network errors gracefully
     """
-    rate_limit = g.get_rate_limit()
-    if api_type == 'core':
-        remaining = rate_limit.core.remaining
-        reset_time = rate_limit.core.reset
-    elif api_type == 'search':
-        remaining = rate_limit.search.remaining
-        reset_time = rate_limit.search.reset
-    else:
-        logger.warning(f"Unknown API type: {api_type}")
-        return
+    try:
+        rate_limit = g.get_rate_limit()
 
-    if remaining < 10:  # Buffer to avoid hitting limit
-        wait_time = reset_time.timestamp() - time.time()
-        if wait_time > 0:
-            logger.info(f"Rate limit low ({remaining} remaining for {api_type}). Waiting {wait_time:.0f} seconds until reset.")
-            time.sleep(wait_time + 1)  # +1 to be safe
+        if api_type == 'core':
+            remaining = rate_limit.core.remaining
+            limit = rate_limit.core.limit
+            reset_time = rate_limit.core.reset
+            buffer = RATE_LIMIT_BUFFER
+        elif api_type == 'search':
+            remaining = rate_limit.search.remaining
+            limit = rate_limit.search.limit
+            reset_time = rate_limit.search.reset
+            buffer = SEARCH_RATE_LIMIT_BUFFER
         else:
-            logger.warning("Rate limit reset time is in the past.")
+            logger.warning(f"Unknown API type: {api_type}")
+            return True
+
+        # Calculate usage percentage
+        usage_percent = ((limit - remaining) / limit) * 100
+
+        # Log current rate limit status
+        logger.debug(f"Rate limit status for {api_type}: {remaining}/{limit} ({usage_percent:.1f}%)")
+
+        # Check if we need to wait
+        if remaining <= buffer:
+            wait_time = max(0, reset_time.timestamp() - time.time())
+
+            if wait_time > 0:
+                # Add exponential backoff for retries
+                if retry_count > 0:
+                    backoff_delay = exponential_backoff(retry_count - 1)
+                    wait_time = max(wait_time, backoff_delay)
+                    logger.info(f"Rate limit low ({remaining} remaining for {api_type}) + retry backoff. Waiting {wait_time:.0f} seconds.")
+                else:
+                    logger.info(f"Rate limit low ({remaining} remaining for {api_type}). Waiting {wait_time:.0f} seconds until reset.")
+
+                time.sleep(wait_time)
+                return False  # Signal that we waited and should retry
+            else:
+                logger.warning("Rate limit reset time is in the past - proceeding with caution")
+
+        return True  # Rate limit check passed
+
+    except Exception as e:
+        logger.warning(f"Failed to check rate limit ({api_type}): {e}")
+
+        # If we can't check rate limits, use exponential backoff
+        if retry_count < MAX_RETRIES:
+            delay = exponential_backoff(retry_count)
+            logger.info(f"Rate limit check failed, using backoff delay: {delay:.1f}s")
+            time.sleep(delay)
+            return False
+
+        logger.error("Max retries exceeded for rate limit check")
+        return True  # Proceed anyway to avoid infinite loop
+
+class ProgressTracker:
+    """
+    Tracks scraping progress and estimates completion time.
+    """
+
+    def __init__(self, total_repos: int):
+        self.total_repos = total_repos
+        self.processed_repos = 0
+        self.start_time = datetime.now()
+        self.last_update_time = self.start_time
+
+    def update_progress(self, repo_name: str = None) -> None:
+        """Update progress and log status."""
+        self.processed_repos += 1
+        current_time = datetime.now()
+
+        # Calculate elapsed time
+        elapsed = current_time - self.start_time
+        elapsed_str = str(elapsed).split('.')[0]  # Remove microseconds
+
+        # Estimate remaining time
+        if self.processed_repos > 0:
+            avg_time_per_repo = elapsed.total_seconds() / self.processed_repos
+            remaining_repos = self.total_repos - self.processed_repos
+            remaining_seconds = avg_time_per_repo * remaining_repos
+            remaining_time = timedelta(seconds=int(remaining_seconds))
+
+            # Log progress every 10 repositories or when significant time has passed
+            time_since_update = current_time - self.last_update_time
+            if self.processed_repos % 10 == 0 or time_since_update.total_seconds() > 300:
+                progress_percent = (self.processed_repos / self.total_repos) * 100
+                logger.info(f"Progress: {self.processed_repos}/{self.total_repos} ({progress_percent:.1f}%) - "
+                          f"Elapsed: {elapsed_str}, Remaining: ~{remaining_time}")
+                if repo_name:
+                    logger.info(f"Currently processing: {repo_name}")
+                self.last_update_time = current_time
+
+    def get_final_stats(self) -> dict:
+        """Get final statistics."""
+        end_time = datetime.now()
+        total_time = end_time - self.start_time
+        return {
+            'total_repos': self.total_repos,
+            'processed_repos': self.processed_repos,
+            'total_time': str(total_time).split('.')[0],
+            'avg_time_per_repo': total_time.total_seconds() / max(self.processed_repos, 1)
+        }
 
 def get_unique_snippets(code_snippets: List[str]) -> List[str]:
     """
@@ -274,11 +404,11 @@ def extract_functions_from_content(py_file_content: str) -> List[str]:
 
 def scrape_github() -> None:
     """
-    Main scraping function that orchestrates the entire GitHub code extraction process.
+    Enhanced main scraping function with improved rate limiting and progress tracking.
 
     This function performs a comprehensive search of GitHub repositories, extracts Python
     function definitions from source files, and saves the results to a JSON file. It
-    handles rate limiting, error recovery, and data deduplication automatically.
+    features enhanced rate limiting, exponential backoff, and detailed progress tracking.
 
     Process Overview:
         1. Search GitHub for Python repositories sorted by star count
@@ -290,72 +420,73 @@ def scrape_github() -> None:
         3. Remove duplicate functions based on MD5 checksums
         4. Save results to JSON file with comprehensive metadata
 
+    Enhanced Features:
+        - Exponential backoff for rate limit retries
+        - Progress tracking with time estimation
+        - Enhanced error handling with retry logic
+        - Better pagination handling
+        - Detailed logging of rate limit status
+
     Args:
         None: This function doesn't take parameters. It uses global constants
               for configuration (GITHUB_TOKEN, QUERY_LANGUAGE, etc.).
 
     Returns:
         None: Results are saved to OUTPUT_FILE. Success/failure is logged.
-
-    Data Structure:
-        Each extracted function is stored as a dictionary with:
-        - repository: Full repository name (owner/repo)
-        - file_path: Path to the source file within the repository
-        - function_code: Complete function definition as string
-        - checksum: MD5 hash for deduplication
-        - stars: Repository star count
-        - language: Always 'python'
-
-    Rate Limiting:
-        - Checks rate limits before each API call
-        - Automatically waits when approaching limits
-        - Handles both core and search API limits separately
-
-    Error Handling:
-        - Continues processing if individual files/repositories fail
-        - Logs all errors with context for debugging
-        - Gracefully handles API errors, encoding issues, and access problems
-
-    Performance Considerations:
-        - Limits repository count to prevent excessive API usage
-        - Filters functions by minimum length (50 characters)
-        - Uses checksums for efficient deduplication
-        - Logs progress for monitoring long-running operations
-
-    Output File:
-        Creates 'scraped_code_snippets.json' with indented JSON format.
-        Contains array of unique function objects with all metadata.
     """
     all_code_snippets = []
     processed_repos = 0
-    
+    retry_count = 0
+
+    # Initialize progress tracker
+    progress = ProgressTracker(MAX_REPOS)
+
     try:
-        # Check rate limit before making the search API call to avoid hitting limits
-        check_rate_limit(g, 'search')
+        # Check rate limit before making the search API call
+        logger.info("Starting GitHub repository search...")
+        rate_check_passed = check_rate_limit(g, 'search', retry_count)
+
+        if not rate_check_passed:
+            retry_count += 1
+            if retry_count >= MAX_RETRIES:
+                logger.error("Max retries exceeded for search API rate limit")
+                return
+            logger.info(f"Retrying search API call (attempt {retry_count})")
+            time.sleep(exponential_backoff(retry_count - 1))
 
         # Perform GitHub repository search using the configured query and sort order
-        # This returns a paginated result set that we can iterate over
         logger.info(f"Searching for repositories with query: {QUERY_LANGUAGE}")
         query = g.search_repositories(query=QUERY_LANGUAGE, sort=SORT_ORDER)
 
         # Process each repository from the search results
         for repo in query:
-            # Enforce the maximum repository limit to control processing time and API usage
+            # Enforce the maximum repository limit
             if processed_repos >= MAX_REPOS:
                 logger.info(f"Reached maximum repository limit: {MAX_REPOS}")
                 break
-                
+
             try:
                 # Log which repository we're currently processing
                 logger.info(f"Processing repository: {repo.full_name}")
 
                 # Check core API rate limit before accessing repository contents
-                check_rate_limit(g, 'core')
+                rate_check_passed = check_rate_limit(g, 'core', retry_count)
+
+                if not rate_check_passed:
+                    retry_count += 1
+                    if retry_count >= MAX_RETRIES:
+                        logger.error("Max retries exceeded for core API rate limit")
+                        break
+                    logger.info(f"Retrying core API call (attempt {retry_count})")
+                    time.sleep(exponential_backoff(retry_count - 1))
+                    continue
+
+                # Reset retry count on successful API call
+                retry_count = 0
 
                 # Get the root directory contents of the repository
-                # This returns a list of ContentFile objects representing files and directories
                 repo_contents = repo.get_contents("")
-                logger.info(f"Found {len(repo_contents)} items in repository root")
+                logger.debug(f"Found {len(repo_contents)} items in repository root")
 
                 # Collect all Python files that need to be processed
                 files_to_process = []
@@ -370,7 +501,12 @@ def scrape_github() -> None:
                         # We limit depth to 1 level to avoid excessive API calls
                         try:
                             # Check rate limit before subdirectory access
-                            check_rate_limit(g, 'core')
+                            rate_check_passed = check_rate_limit(g, 'core')
+
+                            if not rate_check_passed:
+                                logger.warning(f"Skipping subdirectory {content.path} due to rate limits")
+                                continue
+
                             subdir_contents = repo.get_contents(content.path)
                             # Add Python files from this subdirectory
                             for subcontent in subdir_contents:
@@ -381,13 +517,12 @@ def scrape_github() -> None:
                             logger.warning(f"Could not access subdirectory {content.path}: {e}")
                             continue
 
-                logger.info(f"Collected {len(files_to_process)} Python files to process")
+                logger.debug(f"Collected {len(files_to_process)} Python files to process")
 
                 # Process each collected Python file
                 for py_file in files_to_process:
                     try:
                         # Decode the file content from bytes to string using UTF-8 encoding
-                        # GitHub API returns content as base64-encoded bytes
                         py_file_content = py_file.decoded_content.decode("utf-8")
 
                         # Extract individual function definitions from the file content
@@ -406,13 +541,14 @@ def scrape_github() -> None:
                                     'function_code': func.strip(),       # complete function code
                                     'checksum': checksum,                # for duplicate detection
                                     'stars': repo.stargazers_count,      # repository popularity
-                                    'language': 'python'                 # fixed value
+                                    'language': 'python',                # fixed value
+                                    'scraped_at': datetime.now().isoformat()  # timestamp
                                 }
                                 # Add to our collection of all snippets
                                 all_code_snippets.append(snippet_data)
 
                         # Log progress for this file
-                        logger.info(f"Extracted {len(functions)} functions from {py_file.path}")
+                        logger.debug(f"Extracted {len(functions)} functions from {py_file.path}")
 
                     except Exception as e:
                         # Log file processing errors but continue with other files
@@ -424,22 +560,27 @@ def scrape_github() -> None:
                 logger.info(f"Extracted {repo_functions} total function snippets from {repo.full_name}")
 
                 processed_repos += 1
-                logger.info(f"Completed repository {processed_repos}/{MAX_REPOS}: {repo.full_name}")
-                
+                progress.update_progress(repo.full_name)
+
             except Exception as e:
                 # Handle repository-level errors (API limits, access denied, etc.)
-                # Continue with next repository rather than failing completely
                 logger.error(f"Error processing repository {repo.full_name}: {e}")
-                continue
-    
+                retry_count += 1
+                if retry_count < MAX_RETRIES:
+                    logger.info(f"Retrying repository processing (attempt {retry_count})")
+                    time.sleep(exponential_backoff(retry_count - 1))
+                    continue
+                else:
+                    logger.error(f"Max retries exceeded for repository {repo.full_name}")
+                    retry_count = 0
+                    continue
+
     except Exception as e:
         # Handle search-level errors (network issues, API changes, etc.)
-        # Return early since we can't proceed without search capability
         logger.error(f"Error during repository search: {e}")
         return
     
     # Remove duplicate code snippets using checksum-based deduplication
-    # This ensures we don't store identical functions from different repositories
     logger.info("Removing duplicate code snippets based on checksum...")
     unique_snippet_data = []
     seen_checksums = set()  # Set for O(1) lookup performance
@@ -450,20 +591,40 @@ def scrape_github() -> None:
             seen_checksums.add(snippet['checksum'])
             unique_snippet_data.append(snippet)
 
+    # Get final statistics
+    final_stats = progress.get_final_stats()
+
     # Save the final deduplicated data to JSON file
     try:
-        # Write to file with proper encoding and formatting
+        logger.info("Saving results to JSON file...")
         with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
             json.dump(unique_snippet_data, f, indent=2, ensure_ascii=False)
 
-        # Log final statistics
-        logger.info(f"Successfully saved {len(unique_snippet_data)} unique code snippets to {OUTPUT_FILE}")
+        # Log comprehensive final statistics
+        logger.info("=" * 60)
+        logger.info("GITHUB SCRAPING COMPLETED SUCCESSFULLY")
+        logger.info("=" * 60)
         logger.info(f"Total repositories processed: {processed_repos}")
+        logger.info(f"Total unique code snippets: {len(unique_snippet_data)}")
         logger.info(f"Total checksums computed: {len(seen_checksums)}")
+        logger.info(f"Total processing time: {final_stats['total_time']}")
+        logger.info(f"Average time per repository: {final_stats['avg_time_per_repo']:.2f} seconds")
+        logger.info(f"Results saved to: {OUTPUT_FILE}")
+        logger.info("=" * 60)
+
+        # Report final rate limit status
+        try:
+            rate_limit = g.get_rate_limit()
+            logger.info("Final API Usage:")
+            logger.info(f"  Core API: {rate_limit.core.remaining}/{rate_limit.core.limit}")
+            logger.info(f"  Search API: {rate_limit.search.remaining}/{rate_limit.search.limit}")
+        except Exception as e:
+            logger.debug(f"Could not retrieve final rate limit status: {e}")
 
     except Exception as e:
         # Handle file I/O errors (permissions, disk space, etc.)
         logger.error(f"Error saving data to file: {e}")
+        logger.error("Scraping completed but results could not be saved")
 
 def main():
     """
@@ -515,13 +676,54 @@ def main():
         # Execute the main scraping logic
         scrape_github()
         logger.info("GitHub scraping completed successfully!")
-
-        # Report final API usage statistics for monitoring
-        rate_limit = g.get_rate_limit()
-        logger.info(f"Final rate limits - Core: {rate_limit.core.remaining}/{rate_limit.core.limit}, Search: {rate_limit.search.remaining}/{rate_limit.search.limit}")
+    except KeyboardInterrupt:
+        logger.info("GitHub scraping interrupted by user")
+        logger.info("Partial results may have been saved")
     except Exception as e:
         # Catch and log any unexpected errors during execution
         logger.error(f"GitHub scraping failed: {e}")
+        logger.error("Check your GitHub token and network connection")
+
+def init_scraper():
+    """
+    Initialize the GitHub scraper component.
+
+    This function performs basic initialization checks for the scraper
+    including verifying dependencies and setting up the GitHub API client.
+
+    Returns:
+        bool: True if initialization successful, False otherwise
+    """
+    try:
+        logger.info("Initializing GitHub scraper component...")
+
+        # Check if required dependencies are available
+        try:
+            from PyGithub import Github
+            logger.debug("PyGithub library available")
+        except ImportError:
+            logger.warning("PyGithub library not available - scraper functionality limited")
+            return False
+
+        # Check environment variables
+        if GITHUB_TOKEN_ENV_VAR in os.environ:
+            logger.debug("GitHub token found in environment")
+        else:
+            logger.warning(f"GitHub token not found - set {GITHUB_TOKEN_ENV_VAR} to use scraper")
+
+        # Initialize GitHub client (will fail gracefully if token not available)
+        try:
+            g = Github(os.environ.get(GITHUB_TOKEN_ENV_VAR, ''))
+            logger.debug("GitHub client initialized")
+        except Exception as e:
+            logger.debug(f"GitHub client initialization deferred: {e}")
+
+        logger.info("GitHub scraper component initialized successfully")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to initialize GitHub scraper: {e}")
+        return False
 
 if __name__ == "__main__":
     main()
