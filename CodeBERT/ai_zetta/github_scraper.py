@@ -2,6 +2,8 @@
 import os
 import json
 import logging
+import time
+import hashlib
 from itertools import chain
 from PyGithub import Github
 from typing import List, Set
@@ -27,6 +29,32 @@ except KeyError:
 except Exception as e:
     logger.error(f"Failed to initialize GitHub API: {e}")
     raise
+
+def check_rate_limit(g: Github, api_type: str = 'core') -> None:
+    """
+    Check GitHub API rate limits and wait if necessary.
+    Args:
+        g: GitHub instance
+        api_type: 'core' or 'search'
+    """
+    rate_limit = g.get_rate_limit()
+    if api_type == 'core':
+        remaining = rate_limit.core.remaining
+        reset_time = rate_limit.core.reset
+    elif api_type == 'search':
+        remaining = rate_limit.search.remaining
+        reset_time = rate_limit.search.reset
+    else:
+        logger.warning(f"Unknown API type: {api_type}")
+        return
+
+    if remaining < 10:  # Buffer to avoid hitting limit
+        wait_time = reset_time.timestamp() - time.time()
+        if wait_time > 0:
+            logger.info(f"Rate limit low ({remaining} remaining for {api_type}). Waiting {wait_time:.0f} seconds until reset.")
+            time.sleep(wait_time + 1)  # +1 to be safe
+        else:
+            logger.warning("Rate limit reset time is in the past.")
 
 def get_unique_snippets(code_snippets: List[str]) -> List[str]:
     """
@@ -112,10 +140,13 @@ def scrape_github() -> None:
     processed_repos = 0
     
     try:
+        # Check rate limit before search
+        check_rate_limit(g, 'search')
+
         # Search for Python repositories sorted by popularity
         logger.info(f"Searching for repositories with query: {QUERY_LANGUAGE}")
         query = g.search_repositories(query=QUERY_LANGUAGE, sort=SORT_ORDER)
-        
+
         # Iterate over found repositories
         for repo in query:
             if processed_repos >= MAX_REPOS:
@@ -124,10 +155,14 @@ def scrape_github() -> None:
                 
             try:
                 logger.info(f"Processing repository: {repo.full_name}")
-                
+
+                # Check rate limit before getting contents
+                check_rate_limit(g, 'core')
+
                 # Get repository contents
                 repo_contents = repo.get_contents("")
-                
+                logger.info(f"Found {len(repo_contents)} items in repository root")
+
                 # Process files in the repository
                 files_to_process = []
                 
@@ -138,6 +173,7 @@ def scrape_github() -> None:
                     elif content.type == "dir":
                         # Recursively get Python files from subdirectories (limit depth)
                         try:
+                            check_rate_limit(g, 'core')
                             subdir_contents = repo.get_contents(content.path)
                             for subcontent in subdir_contents:
                                 if subcontent.type == "file" and subcontent.name.endswith(".py"):
@@ -145,7 +181,9 @@ def scrape_github() -> None:
                         except Exception as e:
                             logger.warning(f"Could not access subdirectory {content.path}: {e}")
                             continue
-                
+
+                logger.info(f"Collected {len(files_to_process)} Python files to process")
+
                 # Process Python files
                 for py_file in files_to_process:
                     try:
@@ -158,10 +196,12 @@ def scrape_github() -> None:
                         # Add functions to our collection
                         for func in functions:
                             if len(func.strip()) > 50:  # Only include substantial functions
+                                checksum = hashlib.md5(func.strip().encode('utf-8')).hexdigest()
                                 snippet_data = {
                                     'repository': repo.full_name,
                                     'file_path': py_file.path,
                                     'function_code': func.strip(),
+                                    'checksum': checksum,
                                     'stars': repo.stargazers_count,
                                     'language': 'python'
                                 }
@@ -172,7 +212,11 @@ def scrape_github() -> None:
                     except Exception as e:
                         logger.warning(f"Error processing file {py_file.path}: {e}")
                         continue
-                
+
+                # Log total functions extracted from this repository
+                repo_functions = len([s for s in all_code_snippets if s['repository'] == repo.full_name])
+                logger.info(f"Extracted {repo_functions} total function snippets from {repo.full_name}")
+
                 processed_repos += 1
                 logger.info(f"Completed repository {processed_repos}/{MAX_REPOS}: {repo.full_name}")
                 
@@ -184,17 +228,14 @@ def scrape_github() -> None:
         logger.error(f"Error during repository search: {e}")
         return
     
-    # Remove duplicate snippets based on function code
-    logger.info("Removing duplicate code snippets...")
-    unique_snippets = get_unique_snippets([snippet['function_code'] for snippet in all_code_snippets])
-    
-    # Create final dataset with unique snippets
+    # Remove duplicate snippets based on checksum
+    logger.info("Removing duplicate code snippets based on checksum...")
     unique_snippet_data = []
-    seen_codes = set()
-    
+    seen_checksums = set()
+
     for snippet in all_code_snippets:
-        if snippet['function_code'] not in seen_codes:
-            seen_codes.add(snippet['function_code'])
+        if snippet['checksum'] not in seen_checksums:
+            seen_checksums.add(snippet['checksum'])
             unique_snippet_data.append(snippet)
     
     # Save the scraped data
@@ -204,6 +245,7 @@ def scrape_github() -> None:
         
         logger.info(f"Successfully saved {len(unique_snippet_data)} unique code snippets to {OUTPUT_FILE}")
         logger.info(f"Total repositories processed: {processed_repos}")
+        logger.info(f"Total checksums computed: {len(seen_checksums)}")
         
     except Exception as e:
         logger.error(f"Error saving data to file: {e}")
@@ -222,6 +264,10 @@ def main():
     try:
         scrape_github()
         logger.info("GitHub scraping completed successfully!")
+
+        # Log final rate limits
+        rate_limit = g.get_rate_limit()
+        logger.info(f"Final rate limits - Core: {rate_limit.core.remaining}/{rate_limit.core.limit}, Search: {rate_limit.search.remaining}/{rate_limit.search.limit}")
     except Exception as e:
         logger.error(f"GitHub scraping failed: {e}")
 
