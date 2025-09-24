@@ -1,0 +1,30 @@
+[Unit]
+Description=Nomi.ai Autonomous Chat System
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=nomi
+Group=nomi
+WorkingDirectory=/home/nomi/CodeBERT/nomi_automator
+ExecStart=/usr/bin/python3 /home/nomi/CodeBERT/nomi_automator/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nomi_automator
+
+# Environment variables (adjust paths as needed)
+Environment=PYTHONPATH=/home/nomi/CodeBERT/nomi_automator
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/home/nomi/CodeBERT/nomi_automator
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
