@@ -235,6 +235,9 @@ API_RETRY_DELAY = 1  # seconds
 # Voice Chat command prefixes
 VOICE_CHAT_COMMAND_PREFIXES = ["voicechat:", "vchat:", "voice:", "speak:"]
 
+# Integration management command prefixes
+INTEGRATION_COMMAND_PREFIXES = ["integration:", "integrate:", "api:", "webhook:"]
+
 # Mind Map command prefixes
 MINDMAP_COMMAND_PREFIXES = ["mindmap:", "mind:", "mm:", "memory:"]
 LEARN_COMMAND_PREFIXES = ["learn:", "teach:", "study:", "review:"]

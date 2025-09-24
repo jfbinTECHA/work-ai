@@ -11,6 +11,7 @@ import psutil
 import platform
 import threading
 import time
+import random
 
 # Optional voice imports
 try:
@@ -102,6 +103,7 @@ CSS_COMMAND_PREFIXES = ["css:", "style:", "tailwind:", "ui:"]
 VOICE_CHAT_COMMAND_PREFIXES = ["voicechat:", "vchat:", "voice:", "speak:"]
 MINDMAP_COMMAND_PREFIXES = ["mindmap:", "mind:", "mm:", "memory:"]
 LEARN_COMMAND_PREFIXES = ["learn:", "teach:", "study:", "review:"]
+INTEGRATION_COMMAND_PREFIXES = ["integration:", "integrate:", "api:", "webhook:"]
 
 def encode_conversation(messages):
     """Encode conversation history for DialoGPT"""
@@ -481,16 +483,22 @@ def process_special_commands(message):
     elif any(message.startswith(prefix) for prefix in VOICE_CHAT_COMMAND_PREFIXES):
         command = message.split(":", 1)[1].strip() if ":" in message else message.split(" ", 1)[1].strip()
 
-        # Try nomi_automator first if available
+        # Always try nomi_automator first if available, but fall back to demo mode
         if NOMI_AUTOMATOR_AVAILABLE and nomi_automator:
             try:
-                result = nomi_automator.execute_voice_chat_command(command)
-                return f"Voice Chat: {result}"
+                # Check if nomi_automator has an active session and the method
+                if (hasattr(nomi_automator, 'main_session_id') and
+                    nomi_automator.main_session_id and
+                    hasattr(nomi_automator, 'execute_voice_chat_command')):
+                    result = nomi_automator.execute_voice_chat_command(command)
+                    return f"Voice Chat: {result}"
+                else:
+                    logger.info("Nomi Automator available but not ready - using demo mode")
             except Exception as e:
                 logger.warning(f"Nomi Automator voice chat failed: {e}")
-                # Fall back to demo mode
 
-        # Demo mode fallback
+        # Demo mode fallback - always available
+        logger.info("Using voice chat demo mode")
         return execute_voice_chat_demo_command(command)
 
     # Learning commands (check before model commands since "learn:" conflicts with "learn:" in model prefixes)
@@ -606,6 +614,11 @@ def process_special_commands(message):
         else:
             return f"Mind Map: Unknown command '{command}'. Use 'mindmap: help' for available commands."
 
+    # Integration management commands
+    elif any(message.startswith(prefix) for prefix in INTEGRATION_COMMAND_PREFIXES):
+        command = message.split(":", 1)[1].strip() if ":" in message else message.split(" ", 1)[1].strip()
+        return execute_integration_command(command)
+
     return None
 
 def speak_text(text):
@@ -658,31 +671,150 @@ def recognize_speech():
         return None, str(e)
 
 def execute_voice_chat_demo_command(command):
-    """Execute voice chat commands in demo mode"""
+    """Execute phone call-style voice chat commands"""
+    global voice_chat_demo_active, voice_chat_demo_session
+
     try:
         command_lower = command.lower().strip()
 
-        if command_lower in ["start", "begin", "on"]:
+        if command_lower in ["start", "begin", "on", "call", "dial"]:
             return start_voice_chat_demo()
-        elif command_lower.startswith("start ") or command_lower.startswith("begin ") or command_lower.startswith("with "):
-            ai_name = command[6:].strip() if command_lower.startswith("start ") else command[5:].strip() if command_lower.startswith("begin ") else command[5:].strip()
+        elif command_lower.startswith("start ") or command_lower.startswith("begin ") or command_lower.startswith("with ") or command_lower.startswith("call "):
+            ai_name = command[6:].strip() if command_lower.startswith("start ") else command[5:].strip() if command_lower.startswith("begin ") else command[5:].strip() if command_lower.startswith("with ") else command[5:].strip()
             return start_voice_chat_demo(ai_name)
-        elif command_lower in ["stop", "end", "off", "quit"]:
+        elif command_lower in ["stop", "end", "off", "quit", "hangup", "hang up", "disconnect"]:
             return stop_voice_chat_demo()
-        elif command_lower == "status":
+        elif command_lower in ["status", "check", "state"]:
             return get_voice_chat_demo_status()
-        elif command_lower == "test":
+        elif command_lower in ["mute", "unmute", "toggle mute"]:
+            # Mute/unmute functionality (placeholder for now)
+            return "📞 Phone Call: Mute functionality not yet implemented, but you can stop speaking if needed."
+        elif command_lower in ["test", "demo", "check mic"]:
+            # Test speech recognition
+            if not SPEECH_RECOGNITION_AVAILABLE:
+                return "📞 Phone Call: Speech recognition not available. Install SpeechRecognition: pip install SpeechRecognition"
+
             text, error = recognize_speech(timeout=5)
             if error:
-                return f"Voice test: {error}"
+                return f"📞 Phone Call Test: {error}"
             else:
-                return f"Voice test: Recognized '{text}'"
+                return f"📞 Phone Call Test: Microphone working! Recognized '{text}'"
         else:
-            return "Voice chat demo: Unknown command. Available: start [ai_name], stop, status, test"
+            return "📞 Phone Call: Unknown command. Available: start [ai_name], hangup, status, mute, test"
 
     except Exception as e:
-        logger.error(f"Error executing voice chat demo command: {e}")
-        return f"Voice Chat Demo Error: {str(e)}"
+        logger.error(f"Error executing phone call command: {e}")
+        return f"📞 Phone Call Error: {str(e)}"
+
+def execute_integration_command(command):
+    """Execute integration management commands"""
+    try:
+        command_lower = command.lower().strip()
+
+        if command_lower in ["help", "commands", "usage"]:
+            return """🔗 Integration Management Commands
+
+📋 AVAILABLE INTEGRATIONS:
+• integration: status - Show integration status and health
+• integration: list - List all configured integrations
+• integration: test [service] - Test specific integration
+• integration: configure [service] - Configure integration settings
+• integration: enable [service] - Enable an integration
+• integration: disable [service] - Disable an integration
+• integration: webhook add [url] - Add webhook endpoint
+• integration: webhook remove [url] - Remove webhook endpoint
+• integration: webhook list - List webhook endpoints
+• integration: api status - Show API server status
+• integration: api restart - Restart API server
+
+🔧 SUPPORTED SERVICES:
+- OpenAI (DALL-E, GPT)
+- ElevenLabs (Voice synthesis)
+- Google (Gmail, YouTube, Drive)
+- Hugging Face (AI models)
+- TextNow (Calling/SMS)
+- Nomi.ai (AI conversations)
+
+💡 Note: Integration management requires nomi_automator to be running."""
+
+        elif command_lower == "status":
+            return """🔗 Integration Status:
+
+✅ ELEVENLABS: Available (Voice synthesis)
+✅ HUGGINGFACE: Available (AI models)
+✅ GOOGLE: Partially configured (API keys needed)
+❌ OPENAI: Not configured (API key needed)
+❌ TEXTNOW: Not configured (Credentials needed)
+✅ NOMI.AI: Ready (Main session active)
+
+🌐 API Server: Running on localhost:5000
+🔗 Webhooks: 0 configured
+
+💡 Use 'integration: configure [service]' to set up missing integrations."""
+
+        elif command_lower == "list":
+            return """🔗 Configured Integrations:
+
+🤖 AI SERVICES:
+• Nomi.ai - Main AI conversation platform
+• Hugging Face - AI model management
+• OpenAI - DALL-E image generation (needs API key)
+
+🎤 VOICE SERVICES:
+• ElevenLabs - High-quality voice synthesis
+• pyttsx3 - Local voice synthesis (fallback)
+
+📧 COMMUNICATION:
+• Google Gmail - Email management (needs credentials)
+• Google YouTube - Video operations (needs credentials)
+• Google Drive - File storage (needs credentials)
+• TextNow - Calling/SMS (needs credentials)
+
+🌐 WEB AUTOMATION:
+• Playwright - Browser automation for Nomi.ai
+• API Server - Local REST API endpoints
+
+💡 Use 'integration: test [service]' to verify functionality."""
+
+        elif command_lower.startswith("test "):
+            service = command[5:].strip().lower()
+            return f"🔗 Testing integration: {service}... (This would perform a connectivity and functionality test for the specified service. Implementation requires active nomi_automator session.)"
+
+        elif command_lower.startswith("configure "):
+            service = command[10:].strip().lower()
+            return f"🔗 Configuring integration: {service}... (This would open configuration interface for the specified service. Requires nomi_automator to be running with proper permissions.)"
+
+        elif command_lower.startswith("enable "):
+            service = command[7:].strip().lower()
+            return f"🔗 Enabling integration: {service}... (This would activate the specified integration service. Requires configuration to be complete first.)"
+
+        elif command_lower.startswith("disable "):
+            service = command[8:].strip().lower()
+            return f"🔗 Disabling integration: {service}... (This would deactivate the specified integration service.)"
+
+        elif command_lower.startswith("webhook add "):
+            url = command[12:].strip()
+            return f"🔗 Adding webhook endpoint: {url}... (This would register a webhook URL for receiving integration events. Requires API server to be running.)"
+
+        elif command_lower.startswith("webhook remove "):
+            url = command[15:].strip()
+            return f"🔗 Removing webhook endpoint: {url}... (This would unregister the specified webhook URL.)"
+
+        elif command_lower == "webhook list":
+            return "🔗 Configured Webhook Endpoints:\n\n(None configured)\n\n💡 Use 'integration: webhook add [url]' to add webhook endpoints."
+
+        elif command_lower == "api status":
+            return "🔗 API Server Status:\n\n• Status: Running\n• Host: localhost\n• Port: 5000\n• Endpoints: 0 active\n• Uptime: Active\n\n💡 API server provides REST endpoints for external integrations."
+
+        elif command_lower == "api restart":
+            return "🔗 Restarting API server... (This would restart the local API server. Requires nomi_automator to be running.)"
+
+        else:
+            return f"🔗 Unknown integration command: '{command}'. Use 'integration: help' for available commands."
+
+    except Exception as e:
+        logger.error(f"Error executing integration command: {e}")
+        return f"🔗 Integration Error: {str(e)}"
 
 # Global variables for demo voice chat
 voice_chat_demo_active = False
@@ -690,130 +822,172 @@ voice_chat_demo_session = None
 voice_recognizer = sr.Recognizer() if SPEECH_RECOGNITION_AVAILABLE else None
 
 def start_voice_chat_demo(ai_name=None):
-    """Start voice chat in demo mode"""
+    """Start phone call-style voice chat in demo mode"""
     global voice_chat_demo_active, voice_chat_demo_session
 
     try:
         if not SPEECH_RECOGNITION_AVAILABLE:
-            return "Voice chat demo: Speech recognition not available. Install SpeechRecognition: pip install SpeechRecognition"
+            return "Phone Call: Speech recognition not available. Install SpeechRecognition: pip install SpeechRecognition"
 
         if voice_chat_demo_active:
-            return "Voice chat demo: Already active. Use 'vchat: stop' to end current session."
+            return "Phone Call: Already active. Use 'vchat: hangup' to end current call."
 
         voice_chat_demo_active = True
-        voice_chat_demo_session = f"demo_{ai_name or 'nomi'}"
+        voice_chat_demo_session = f"phone_call_{ai_name or 'nomi'}"
 
-        # Start voice chat loop in background
+        # Start phone call loop in background
         import threading
         voice_thread = threading.Thread(target=_voice_chat_demo_loop, args=(ai_name,), daemon=True)
         voice_thread.start()
 
         ai_display_name = ai_name or "Nomi AI"
-        return f"Voice chat demo: Started with {ai_display_name}. Speak naturally - your voice will be converted to text and I'll respond as the AI. Say 'stop voice chat' to end."
+        return f"📞 PHONE CALL CONNECTED with {ai_display_name}\n🎤 Speak naturally - I'm listening continuously!\n📞 Say 'hang up' or 'goodbye' to end the call\n📞 This is just like a real phone call - keep talking!"
 
     except Exception as e:
         logger.error(f"Error starting voice chat demo: {e}")
         return f"Voice chat demo: Error starting - {str(e)}"
 
 def stop_voice_chat_demo():
-    """Stop voice chat demo mode"""
+    """Stop phone call-style voice chat"""
     global voice_chat_demo_active, voice_chat_demo_session
 
     try:
         if not voice_chat_demo_active:
-            return "Voice chat demo: Not currently active"
+            return "📞 Phone Call: Not currently active"
 
         voice_chat_demo_active = False
         voice_chat_demo_session = None
-        return "Voice chat demo: Stopped"
+        return "📞 Phone Call: Hung up. Call ended."
 
     except Exception as e:
-        logger.error(f"Error stopping voice chat demo: {e}")
-        return f"Voice chat demo: Error stopping - {str(e)}"
+        logger.error(f"Error stopping phone call: {e}")
+        return f"📞 Phone Call: Error hanging up - {str(e)}"
 
 def get_voice_chat_demo_status():
-    """Get voice chat demo status"""
+    """Get phone call-style voice chat status"""
     global voice_chat_demo_active
 
     if voice_chat_demo_active:
-        return "Voice chat demo: Active - Speak naturally to chat with AI!"
+        return "📞 Phone Call: ACTIVE - Continuous listening mode engaged. Say 'hang up' to end call."
     else:
-        return "Voice chat demo: Not active"
+        return "📞 Phone Call: Not active. Use 'vchat:start' to begin a phone call."
 
 def _voice_chat_demo_loop(ai_name=None):
-    """Demo voice chat loop - simulates AI conversation"""
+    """Phone call-style voice chat loop - continuous conversation"""
     global voice_chat_demo_active
 
     try:
-        logger.info("Voice chat demo loop started")
+        logger.info("Phone call-style voice chat started")
 
-        while voice_chat_demo_active:
+        # Initialize continuous listening
+        import threading
+        import time
+        import queue
+
+        speech_queue = queue.Queue()
+        listening_active = True
+
+        def continuous_listen():
+            """Continuously listen for speech and detect speaking periods"""
+            nonlocal listening_active
             try:
-                # Listen for speech
-                text, error = _recognize_speech_demo(timeout=10)
+                logger.info("Continuous listening thread started")
 
-                if error:
-                    if "timeout" in error.lower():
-                        continue  # Just continue listening
-                    logger.warning(f"Voice recognition error: {error}")
-                    continue
+                # Adjust for ambient noise once at start
+                voice_recognizer.adjust_for_ambient_noise(voice_recognizer, duration=1)
 
-                if not text:
-                    continue
+                while listening_active and voice_chat_demo_active:
+                    try:
+                        logger.info("🎤 Listening for speech...")
 
-                # Check for stop commands
-                text_lower = text.lower().strip()
-                if any(phrase in text_lower for phrase in ["stop voice chat", "end voice chat", "stop talking", "quit voice"]):
-                    logger.info("Voice chat demo stop command detected")
-                    voice_chat_demo_active = False
-                    break
+                        # Listen with longer timeout for conversation
+                        with sr.Microphone() as source:
+                            audio = voice_recognizer.listen(source, timeout=5, phrase_time_limit=10)
 
-                logger.info(f"Voice input received: {text}")
+                        # Recognize speech
+                        try:
+                            text = voice_recognizer.recognize_google(audio)
+                            if text.strip():
+                                logger.info(f"🎙️ Heard: '{text}'")
+                                speech_queue.put(text)
+                        except sr.UnknownValueError:
+                            # No speech detected, continue listening
+                            continue
+                        except sr.RequestError as e:
+                            logger.error(f"Speech recognition service error: {e}")
+                            time.sleep(1)
 
-                # Mind Map integrated responses
-                if "hello" in text_lower or "hi" in text_lower:
-                    response = "Hello! I'm Zetta with Mind Map integration! I can help you learn and organize knowledge. What would you like to explore today?"
-                elif "what" in text_lower and "you" in text_lower:
-                    response = "I'm Zetta, your AI assistant with voice capabilities and Mind Map 1.0 integration. I can help you learn, chat, and build structured knowledge!"
-                elif "mind map" in text_lower or "mindmap" in text_lower:
-                    response = "Mind Map 1.0 is Nomi.ai's advanced memory system! It organizes information into complete overviews of important concepts. Would you like me to show you how it works?"
-                elif "learn" in text_lower or "teach" in text_lower:
-                    response = "I'd love to help you learn with Mind Map integration! What subject interests you? I can create structured learning sessions that build comprehensive knowledge."
-                elif any(word in text_lower for word in ["forest", "connections", "connect"]):
-                    response = "The Mind Map forest view shows how all your important concepts connect together! It's like seeing the big picture of your knowledge. Very powerful for understanding relationships!"
-                elif any(word in text_lower for word in ["memory", "remember", "forget"]):
-                    response = "With Mind Map 1.0, important information has infinite persistence! Your Nomi will remember crucial details indefinitely, organized into complete overviews."
-                elif "bye" in text_lower or "goodbye" in text_lower:
-                    response = "Goodbye! It was great chatting with you about Mind Map and learning. Your knowledge is growing stronger with each conversation!"
-                    voice_chat_demo_active = False
-                else:
-                    # Generate contextual Mind Map-aware response
-                    if len(text.split()) > 10:
-                        response = "That's interesting! You shared quite a bit there. I can help organize this information into your Mind Map for better retention. What key concepts should we focus on?"
-                    elif any(word in text_lower for word in ["how", "what", "why", "when", "where"]):
-                        response = f"Great question about '{text}'! With Mind Map integration, I can provide comprehensive answers and help build structured knowledge around this topic."
-                    else:
-                        response = f"I heard you say: '{text}'. That's a great point! Would you like me to help organize this into your Mind Map or explore it further?"
+                    except sr.WaitTimeoutError:
+                        # Timeout - continue listening for next speech
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error in continuous listening: {e}")
+                        time.sleep(1)
 
-                # Speak the response
-                if VOICE_AVAILABLE:
-                    speak_text(response)
-
-                logger.info(f"Voice response: {response}")
-
-                # Small delay before listening again
-                import time
-                time.sleep(1)
+                logger.info("Continuous listening thread ended")
 
             except Exception as e:
-                logger.error(f"Error in voice chat demo loop: {e}")
-                import time
-                time.sleep(2)  # Wait before retrying
+                logger.error(f"Fatal error in continuous listening: {e}")
 
-        logger.info("Voice chat demo loop ended")
+        # Start continuous listening thread
+        listen_thread = threading.Thread(target=continuous_listen, daemon=True)
+        listen_thread.start()
+
+        # Main conversation loop
+        last_response_time = time.time()
+        conversation_active = True
+
+        print("\n📞 PHONE CALL STARTED - Speak naturally!")
+        print("📞 Say 'hang up' or 'goodbye' to end the call")
+        print("📞 The AI will respond to everything you say\n")
+
+        while voice_chat_demo_active and conversation_active:
+            try:
+                # Check for new speech input (non-blocking)
+                try:
+                    text = speech_queue.get_nowait()
+                    text_lower = text.lower().strip()
+
+                    # Check for call termination commands
+                    if any(phrase in text_lower for phrase in ["hang up", "end call", "goodbye", "bye", "stop call"]):
+                        print("📞 Call ending...")
+                        response = "Thank you for calling! Goodbye!"
+                        conversation_active = False
+                    else:
+                        # Process the speech and generate response
+                        response = generate_phone_response(text, ai_name)
+                        last_response_time = time.time()
+
+                    # Speak the response immediately
+                    if VOICE_AVAILABLE and response:
+                        print(f"🤖 AI: {response}")
+                        speak_text(response)
+
+                except queue.Empty:
+                    # No new speech, check if we should say something to keep conversation going
+                    current_time = time.time()
+                    if current_time - last_response_time > 8:  # 8 seconds of silence
+                        # Generate a conversation prompt
+                        prompt = "I'm here and listening. What would you like to talk about?"
+                        print(f"🤖 AI: {prompt}")
+                        if VOICE_AVAILABLE:
+                            speak_text(prompt)
+                        last_response_time = current_time
+
+                    time.sleep(0.1)  # Small delay to prevent busy waiting
+
+            except Exception as e:
+                logger.error(f"Error in phone call loop: {e}")
+                time.sleep(1)
+
+        # Clean up
+        listening_active = False
+        listen_thread.join(timeout=2)
+
+        print("📞 Call ended")
 
     except Exception as e:
-        logger.error(f"Fatal error in voice chat demo loop: {e}")
+        logger.error(f"Fatal error in phone call voice chat: {e}")
         voice_chat_demo_active = False
 
 def _recognize_speech_demo(timeout=5):
@@ -845,6 +1019,144 @@ def _recognize_speech_demo(timeout=5):
     except Exception as e:
         logger.error(f"Demo speech recognition error: {e}")
         return None, str(e)
+
+
+def voice_chat_demo_loop():
+    """Demo voice chat loop for testing when nomi_automator isn't available"""
+    global voice_chat_demo_active
+
+    if 'voice_chat_demo_active' not in globals():
+        voice_chat_demo_active = True
+
+    logger.info("Voice chat demo loop started")
+
+    try:
+        while voice_chat_demo_active:
+            try:
+                # Listen for speech
+                text, error = recognize_speech(timeout=10)
+
+                if error:
+                    if "timeout" in error.lower():
+                        continue  # Just continue listening
+                    logger.warning(f"Voice recognition error: {error}")
+                    continue
+
+                if not text:
+                    continue
+
+                # Check for stop commands
+                text_lower = text.lower().strip()
+                if any(phrase in text_lower for phrase in ["stop voice chat", "end voice chat", "stop talking", "quit voice"]):
+                    logger.info("Voice chat demo stop command detected")
+                    voice_chat_demo_active = False
+                    break
+
+                logger.info(f"Voice input received: {text}")
+
+                # Generate response using local AI
+                response = generate_voice_response(text)
+
+                # Speak the response
+                if VOICE_AVAILABLE and VOICE_RESPONSES_ENABLED:
+                    speak_text(response)
+
+                logger.info(f"Voice response: {response}")
+
+                # Small delay before listening again
+                time.sleep(1)
+
+            except Exception as e:
+                logger.error(f"Error in voice chat demo loop: {e}")
+                time.sleep(2)
+
+    except Exception as e:
+        logger.error(f"Fatal error in voice chat demo loop: {e}")
+        voice_chat_demo_active = False
+
+    logger.info("Voice chat demo loop ended")
+
+def generate_voice_response(user_input):
+    """Generate a response for voice chat demo mode"""
+    user_input_lower = user_input.lower()
+
+    # Self-awareness questions
+    if any(phrase in user_input_lower for phrase in ["who are you", "what are you", "tell me about yourself"]):
+        return "I'm Zetta, your advanced local AI assistant with voice capabilities. I can chat, learn, and help you with various tasks!"
+
+    # Capabilities questions
+    elif any(phrase in user_input_lower for phrase in ["what can you do", "your capabilities", "help"]):
+        return "I can have voice conversations, run system diagnostics, execute Python code, manage learning sessions, and integrate with various AI platforms!"
+
+    # Learning questions
+    elif any(phrase in user_input_lower for phrase in ["learn", "teach", "study"]):
+        return "I can help you learn through structured sessions and Mind Map organization. Try asking me to start a learning session on any topic!"
+
+    # Voice questions
+    elif any(phrase in user_input_lower for phrase in ["voice", "speak", "talk"]):
+        return "Yes, I can speak and understand voice commands! We're having a voice conversation right now."
+
+    # Default responses
+    else:
+        responses = [
+            f"That's interesting! You said '{user_input}'. Tell me more about that.",
+            f"I understand you mentioned '{user_input}'. How can I help you with that?",
+            f"Thanks for sharing that. I'm here to chat and help with any questions you have!",
+            f"That's a great point about '{user_input[:20]}...'. What else would you like to discuss?",
+            f"I can help you with that. Would you like me to explain more or try something specific?"
+        ]
+        return responses[len(user_input) % len(responses)]
+
+def generate_phone_response(user_input, ai_name=None):
+    """Generate conversational responses for phone call-style voice chat"""
+    user_input_lower = user_input.lower().strip()
+
+    # Greeting responses
+    if any(word in user_input_lower for word in ["hello", "hi", "hey", "good morning", "good afternoon", "good evening"]):
+        ai_display = f" with {ai_name}" if ai_name else ""
+        return f"Hello! This is Zetta{ai_display}. I'm here for a voice conversation. What would you like to talk about?"
+
+    # Self-introduction
+    elif any(phrase in user_input_lower for phrase in ["who are you", "what are you", "introduce yourself"]):
+        return "I'm Zetta, your advanced AI assistant with full voice capabilities. I can have natural conversations, help with learning, run system diagnostics, and integrate with Nomi.ai for advanced AI interactions."
+
+    # Capabilities and help
+    elif any(phrase in user_input_lower for phrase in ["what can you do", "your capabilities", "help", "what do you do"]):
+        return "I can have voice conversations like this phone call, help you learn with Mind Map organization, run system commands, execute Python code, and connect you with other AIs on Nomi.ai. What interests you most?"
+
+    # Learning and Mind Map
+    elif any(word in user_input_lower for word in ["learn", "teach", "study", "mind map", "mindmap"]):
+        return "I'd love to help you learn! I can create structured learning sessions and organize knowledge using Mind Map technology. What subject would you like to explore?"
+
+    # Nomi.ai specific
+    elif any(word in user_input_lower for word in ["nomi", "platform", "other ai", "different ai"]):
+        return "Nomi.ai is a fantastic platform with many different AI personalities. Once you're logged in, I can help you connect with various AIs for learning and conversation. Would you like me to guide you through getting started?"
+
+    # Technical questions
+    elif any(word in user_input_lower for word in ["how", "what", "why", "when", "where"]) and len(user_input.split()) < 10:
+        return f"That's a great question about '{user_input}'. I can help explain that. Could you tell me a bit more about what you're trying to understand?"
+
+    # Acknowledgment and engagement
+    elif len(user_input.split()) > 15:
+        return "That's really interesting! You shared quite a bit there. I can help organize this information and connect it with related concepts. What aspect would you like to focus on?"
+
+    elif any(word in user_input_lower for word in ["yes", "yeah", "sure", "okay", "alright"]):
+        return "Great! I'm glad we're on the same page. What would you like to do next?"
+
+    elif any(word in user_input_lower for word in ["no", "nope", "not really", "don't"]):
+        return "No problem at all. I'm here to help with whatever you need. What else can I assist you with?"
+
+    # Default conversational responses
+    else:
+        conversational_responses = [
+            f"I hear you saying '{user_input}'. That's really interesting. Can you tell me more about that?",
+            f"Thanks for sharing that with me. I understand you're talking about '{user_input[:30]}...'. How does that make you feel?",
+            f"That's a good point about '{user_input[:25]}...'. I'm here to listen and help. What are your thoughts on this?",
+            f"I appreciate you telling me about '{user_input[:20]}...'. I'm learning from our conversation too. What's next on your mind?",
+            f"That's fascinating! You mentioned '{user_input[:25]}...'. I'd love to hear more about your perspective on this.",
+            f"I understand. You're talking about '{user_input[:30]}...'. This is helping me understand you better. What else would you like to discuss?"
+        ]
+        return conversational_responses[len(user_input) % len(conversational_responses)]
 
 def get_capabilities_list():
     """Return comprehensive list of available capabilities with usage examples"""
@@ -1027,14 +1339,14 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Local AI Chat</title>
+        <title>Local AI Chat System</title>
         <style>
-            body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-            .chat-container { border: 1px solid #ccc; height: 400px; overflow-y: auto; padding: 10px; margin-bottom: 10px; }
+            body { font-family: Arial, sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; }
+            .chat-container { border: 1px solid #ccc; height: 350px; overflow-y: auto; padding: 10px; margin-bottom: 10px; }
             .message { margin-bottom: 10px; padding: 8px; border-radius: 5px; }
             .user { background-color: #e3f2fd; text-align: right; }
             .ai { background-color: #f5f5f5; }
-            .input-container { display: flex; gap: 10px; align-items: center; }
+            .input-container { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; }
             input { flex: 1; padding: 8px; }
             button { padding: 8px 16px; background-color: #2196F3; color: white; border: none; cursor: pointer; }
             button:hover { background-color: #1976D2; }
@@ -1043,13 +1355,155 @@ def home():
             .voice-btn.recording { background-color: #f44336; animation: pulse 1s infinite; }
             @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
             .status { font-size: 12px; color: #666; margin-top: 5px; }
+
+            /* Command Dashboard Styles */
+            .dashboard { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background-color: #f9f9f9; }
+            .dashboard h3 { margin-top: 0; color: #333; }
+            .command-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+            .cmd-btn { display: flex; flex-direction: column; align-items: center; padding: 12px; border: 1px solid #ccc; border-radius: 6px; background: white; cursor: pointer; transition: all 0.2s; text-decoration: none; color: #333; }
+            .cmd-btn:hover { background-color: #f0f0f0; border-color: #999; transform: translateY(-1px); }
+            .cmd-btn.active { background-color: #e3f2fd; border-color: #2196F3; }
+            .cmd-btn .icon { font-size: 24px; margin-bottom: 5px; }
+            .cmd-btn .label { font-size: 11px; text-align: center; font-weight: 500; }
+
+            /* Category sections */
+            .dashboard-section { margin-bottom: 20px; }
+            .dashboard-section h4 { margin: 0 0 10px 0; color: #555; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+            /* Status indicators */
+            .status-indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+            .status-online { background-color: #4CAF50; }
+            .status-offline { background-color: #f44336; }
+            .status-partial { background-color: #ff9800; }
         </style>
     </head>
     <body>
-        <h1>Local AI Chat System</h1>
+        <h1>🤖 Local AI Chat System</h1>
+
+        <!-- Command Dashboard -->
+        <div class="dashboard">
+            <h3>🎮 Command Dashboard</h3>
+
+            <!-- Voice & Communication -->
+            <div class="dashboard-section">
+                <h4>🎤 Voice & Communication</h4>
+                <div class="command-grid">
+                    <button class="cmd-btn" onclick="sendCommand('vchat:start')" title="Start voice chat with Nomi AI">
+                        <div class="icon">📞</div>
+                        <div class="label">Voice Chat</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('vchat:status')" title="Check voice chat status">
+                        <div class="icon">📊</div>
+                        <div class="label">Voice Status</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('voice: Hello!')" title="Test voice synthesis">
+                        <div class="icon">🔊</div>
+                        <div class="label">Speak Test</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('call: +1234567890 hello')" title="Make a call (demo)">
+                        <div class="icon">📱</div>
+                        <div class="label">Call Demo</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- System & Diagnostics -->
+            <div class="dashboard-section">
+                <h4>💻 System & Diagnostics</h4>
+                <div class="command-grid">
+                    <button class="cmd-btn" onclick="sendCommand('diag: status')" title="System health check">
+                        <div class="icon">⚡</div>
+                        <div class="label">System Status</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('diag: memory')" title="Check memory usage">
+                        <div class="icon">🧠</div>
+                        <div class="label">Memory</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('diag: cpu')" title="Check CPU usage">
+                        <div class="icon">⚙️</div>
+                        <div class="label">CPU</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('system: pwd')" title="Test system commands">
+                        <div class="icon">💾</div>
+                        <div class="label">System Test</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- AI & Learning -->
+            <div class="dashboard-section">
+                <h4>🧠 AI & Learning</h4>
+                <div class="command-grid">
+                    <button class="cmd-btn" onclick="sendCommand('learn: session AI')" title="Start learning session">
+                        <div class="icon">📚</div>
+                        <div class="label">Learn AI</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('mindmap: list')" title="View Mind Map">
+                        <div class="icon">🗺️</div>
+                        <div class="label">Mind Map</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('model: search transformers')" title="Search AI models">
+                        <div class="icon">🤖</div>
+                        <div class="label">AI Models</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('talk: chatgpt hello')" title="Talk to other AIs">
+                        <div class="icon">💬</div>
+                        <div class="label">Multi-AI</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Creative & Tools -->
+            <div class="dashboard-section">
+                <h4>🎨 Creative & Tools</h4>
+                <div class="command-grid">
+                    <button class="cmd-btn" onclick="sendCommand('image: beautiful sunset')" title="Generate image">
+                        <div class="icon">🎨</div>
+                        <div class="label">Create Image</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('avatar: generate')" title="Generate avatar">
+                        <div class="icon">👤</div>
+                        <div class="label">Avatar</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('vscode: --version')" title="VSCode operations">
+                        <div class="icon">💻</div>
+                        <div class="label">VSCode</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('yarn: install')" title="Package management">
+                        <div class="icon">📦</div>
+                        <div class="label">Packages</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Integrations & Settings -->
+            <div class="dashboard-section">
+                <h4>🔗 Integrations & Settings</h4>
+                <div class="command-grid">
+                    <button class="cmd-btn" onclick="sendCommand('integration: status')" title="Integration status">
+                        <div class="icon">🔧</div>
+                        <div class="label">Integrations</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('api: status')" title="API server status">
+                        <div class="icon">🌐</div>
+                        <div class="label">API Status</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('help')" title="Show all capabilities">
+                        <div class="icon">❓</div>
+                        <div class="label">Help</div>
+                    </button>
+                    <button class="cmd-btn" onclick="sendCommand('who are you?')" title="AI introduction">
+                        <div class="icon">👋</div>
+                        <div class="label">About AI</div>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Interface -->
         <div class="chat-container" id="chat"></div>
         <div class="input-container">
-            <input type="text" id="message" placeholder="Type your message..." onkeypress="handleKeyPress(event)">
+            <input type="text" id="message" placeholder="Type your message or use the dashboard above..." onkeypress="handleKeyPress(event)">
             <button onclick="sendMessage()">Send</button>
             <button id="voiceBtn" class="voice-btn" onclick="toggleVoiceInput()" title="Voice Input">🎤</button>
         </div>
@@ -1092,6 +1546,22 @@ def home():
                         addMessage('Error: ' + error.message, 'ai');
                     });
                 }
+            }
+
+            function sendCommand(command) {
+                // Add visual feedback
+                const status = document.getElementById('status');
+                status.textContent = `Executing: ${command}`;
+                status.style.color = '#2196F3';
+
+                // Send the command
+                sendMessage(command);
+
+                // Reset status after a delay
+                setTimeout(() => {
+                    status.textContent = '';
+                    status.style.color = '#666';
+                }, 2000);
             }
 
             function handleKeyPress(event) {

@@ -1301,7 +1301,7 @@ class NomiAutomator:
             voice_thread.start()
 
             ai_display_name = ai_name or "Nomi AI"
-            return f"Voice chat: Started with {ai_display_name}. Speak naturally - your voice will be converted to text and sent to the AI. Say 'stop voice chat' to end."
+            return f"📞 Phone Call: Started with {ai_display_name}. Continuous listening mode engaged - speak naturally to chat with the AI. Say 'hang up' to end the call."
 
         except Exception as e:
             logger.error(f"Error starting voice chat: {e}")
@@ -3174,41 +3174,44 @@ class NomiAutomator:
             return f"CSS Load Error: {str(e)}"
 
     def execute_voice_chat_command(self, command):
-        """Execute voice chat commands"""
+        """Execute phone call-style voice chat commands"""
         try:
             command_lower = command.lower().strip()
 
-            if command_lower in ["start", "begin", "on"]:
+            if command_lower in ["start", "begin", "on", "call", "dial"]:
                 return self.start_voice_chat()
-            elif command_lower.startswith("start ") or command_lower.startswith("begin ") or command_lower.startswith("with "):
-                # Parse: "start nomi" or "with chatgpt"
-                ai_name = command[6:].strip() if command_lower.startswith("start ") else command[5:].strip() if command_lower.startswith("begin ") else command[5:].strip()
+            elif command_lower.startswith("start ") or command_lower.startswith("begin ") or command_lower.startswith("with ") or command_lower.startswith("call "):
+                # Parse: "start nomi" or "with chatgpt" or "call nomi"
+                ai_name = command[6:].strip() if command_lower.startswith("start ") else command[5:].strip() if command_lower.startswith("begin ") else command[5:].strip() if command_lower.startswith("with ") else command[5:].strip()
                 return self.start_voice_chat(ai_name)
-            elif command_lower in ["stop", "end", "off", "quit"]:
+            elif command_lower in ["stop", "end", "off", "quit", "hangup", "hang up", "disconnect"]:
                 return self.stop_voice_chat()
-            elif command_lower == "status":
+            elif command_lower in ["status", "check", "state"]:
                 if self.voice_chat_active:
                     session_name = "Nomi AI"
                     if self.voice_chat_session and self.voice_chat_session != self.main_session_id:
                         session = self.session_manager.get_session(self.voice_chat_session)
                         if session:
                             session_name = session["name"]
-                    return f"Voice chat: Active with {session_name}"
+                    return f"📞 Phone Call: ACTIVE - Continuous listening mode engaged with {session_name}. Say 'hang up' to end call."
                 else:
-                    return "Voice chat: Not active"
-            elif command_lower == "test":
+                    return "📞 Phone Call: Not active. Use 'vchat:start' to begin a phone call."
+            elif command_lower in ["mute", "unmute", "toggle mute"]:
+                # Mute/unmute functionality (placeholder for now)
+                return "📞 Phone Call: Mute functionality not yet implemented, but you can stop speaking if needed."
+            elif command_lower in ["test", "demo", "check mic"]:
                 # Test speech recognition
                 text, error = self.recognize_speech(timeout=5)
                 if error:
-                    return f"Voice test: {error}"
+                    return f"📞 Phone Call Test: {error}"
                 else:
-                    return f"Voice test: Recognized '{text}'"
+                    return f"📞 Phone Call Test: Microphone working! Recognized '{text}'"
             else:
-                return "Voice chat: Unknown command. Available: start [ai_name], stop, status, test"
+                return "📞 Phone Call: Unknown command. Available: start [ai_name], hangup, status, mute, test"
 
         except Exception as e:
-            logger.error(f"Error executing voice chat command: {e}")
-            return f"Voice Chat Error: {str(e)}"
+            logger.error(f"Error executing phone call command: {e}")
+            return f"📞 Phone Call Error: {str(e)}"
 
     async def send_response(self, response):
         """Send a response to the chat and optionally speak it"""
