@@ -8,7 +8,7 @@ import argparse
 import random
 from datetime import datetime, timedelta
 from itertools import chain
-from PyGithub import Github
+from github import Github
 from typing import List, Set, Optional
 
 # Define commandline arguments
@@ -112,7 +112,8 @@ JITTER_RANGE = 0.1  # Random jitter as percentage of delay
 # Initialize PyGithub client with personal access token
 # This creates the authenticated connection to GitHub's API
 try:
-    g = Github(os.environ[GITHUB_TOKEN_ENV_VAR])
+    token_auth = Auth(token=os.environ[GITHUB_TOKEN_ENV_VAR])
+        g = Github(auth=token_auth)
     logger.info("GitHub API initialized successfully")
 except KeyError:
     # Handle missing environment variable (most common setup error)
