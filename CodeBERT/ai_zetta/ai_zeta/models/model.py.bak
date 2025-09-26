@@ -1,0 +1,2 @@
+def calculate_reward(action, outcome):
+    return action * outcome

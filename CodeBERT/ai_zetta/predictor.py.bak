@@ -140,19 +140,6 @@ class AttentionLayer(nn.Module):
         weights = torch.matmul(query_hidden, keys_hidden.T) / math.sqrt(self.hidden_dim)
         return torch.softmax(weights, dim=1)
 
-class AttentionLayer(nn.Module):
-    def __init__(self, embed_dim, hidden_dim):
-        super().__init__()
-        self.W = nn.Linear(embed_dim, hidden_dim)
-        self.U = nn.Linear(hidden_dim, hidden_dim)
-        self.hidden_dim = hidden_dim
-
-    def forward(self, query, keys):
-        query_hidden = self.W(query)
-        keys_hidden = self.U(keys)
-        weights = torch.matmul(query_hidden, keys_hidden.T) / math.sqrt(self.hidden_dim)
-        return torch.softmax(weights, dim=1)
-
     def predict(self, code_snippet, max_length=100):
         """
         Generate code completion using enhanced preprocessing.
